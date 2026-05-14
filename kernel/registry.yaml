@@ -1,0 +1,89 @@
+# =============================================================================
+# Hermes v0.1 — Agent Type Registry
+# Defines every known agent type, its tier, and what tools it may use.
+# "status" controls whether the Kernel will instantiate this type.
+#   planned        → type defined, implementation starts Day 4
+#   not_implemented → reserved for v0.2+, Kernel will reject spawn requests
+# =============================================================================
+
+agents:
+
+  # --- Tier 2 Specialists (v0.1 planned) ------------------------------------
+
+  - type: "coder"
+    tier: 2
+    description: "Reads and writes source code files, runs build/test commands"
+    status: "planned"
+    allowed_tools:
+      - read_file
+      - write_file
+      - execute_command
+    execute_whitelist:
+      - "npm test"
+      - "npm run build"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npx tsc --noEmit"
+      - "pytest"
+      - "python -m pytest"
+    forbidden_paths:
+      - ".env"
+      - "kernel/**"
+      - "audit/**"
+      - "**/*.db"
+
+  - type: "writer"
+    tier: 2
+    description: "Writes and updates Markdown documentation files"
+    status: "planned"
+    allowed_tools:
+      - read_file
+      - write_markdown
+    forbidden_tools:
+      - execute_command
+      - delete_file
+    forbidden_paths:
+      - "src/**"
+      - ".env"
+      - "kernel/**"
+
+  # --- Tier 1 Department Heads (v0.2+) --------------------------------------
+
+  - type: "pm"
+    tier: 1
+    description: "Decomposes requirements into tasks, manages milestones"
+    status: "not_implemented"
+
+  - type: "arch"
+    tier: 1
+    description: "Designs system architecture, reviews technical decisions"
+    status: "not_implemented"
+
+  - type: "qa"
+    tier: 1
+    description: "Reviews code quality, security, and test coverage"
+    status: "not_implemented"
+
+  - type: "ops"
+    tier: 1
+    description: "Manages deployments, monitoring, and daily cost reports"
+    status: "not_implemented"
+
+  - type: "gtm"
+    tier: 1
+    description: "Handles content, SEO, and user feedback analysis"
+    status: "not_implemented"
+
+  # --- Tier 2 Specialists (v0.2+) -------------------------------------------
+
+  - type: "researcher"
+    tier: 2
+    description: "Technical research, competitive analysis, documentation review"
+    status: "not_implemented"
+
+  # --- Tier 3 Ephemeral (v0.2+) ---------------------------------------------
+
+  - type: "ephemeral"
+    tier: 3
+    description: "Single-use agent for one-off tasks; destroyed after completion"
+    status: "not_implemented"

@@ -1,0 +1,25 @@
+{
+  "name": "hermes",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "clean": "turbo run clean",
+    "typecheck": "turbo run typecheck",
+    "test:provider": "tsx --env-file=.env scripts/test-provider.ts",
+    "test:openai-compatible": "tsx --env-file=.env scripts/test-openai-compatible.ts",
+    "smoke:kernel": "tsx --env-file=.env scripts/smoke-kernel.ts",
+    "smoke:workspace": "tsx scripts/smoke-workspace.ts",
+    "smoke:runtime": "tsx scripts/smoke-runtime.ts",
+    "smoke:approval": "tsx --env-file=.env scripts/smoke-approval.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "turbo": "^2.3.0",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm --version)",
+      "Bash(npm --version)",
+      "Bash(python3 -c ' *)",
+      "Bash(pnpm install *)",
+      "Bash(pnpm build *)",
+      "Bash(find packages/*/src -type f)",
+      "Bash(pnpm list *)",
+      "Bash(git -C /Users/libo/opc diff --name-only)",
+      "Bash(find packages/*/src -newer packages/provider/package.json -name \"*.ts\")",
+      "Bash(grep -v \"^--$\")",
+      "Bash(pnpm test:openai-compatible)",
+      "Bash(node -e \"const { DatabaseSync } = require\\('node:sqlite'\\); const db = new DatabaseSync\\(':memory:'\\); db.exec\\('CREATE TABLE t \\(id INTEGER PRIMARY KEY\\)'\\); db.prepare\\('INSERT INTO t VALUES \\(?\\)'\\).run\\(1\\); const row = db.prepare\\('SELECT * FROM t'\\).get\\(\\); console.log\\('node:sqlite OK:', JSON.stringify\\(row\\)\\);\")",
+      "Bash(node -e \"const { DatabaseSync } = require\\('node:sqlite'\\); const db = new DatabaseSync\\(':memory:'\\); db.exec\\('PRAGMA journal_mode = WAL; CREATE TABLE k \\(id TEXT PRIMARY KEY, v TEXT\\); INSERT INTO k VALUES \\(?,?\\)'\\).run; db.exec\\('PRAGMA journal_mode = WAL;'\\); db.exec\\('CREATE TABLE k \\(id TEXT PRIMARY KEY, v TEXT\\);'\\); db.prepare\\('INSERT INTO k VALUES \\(?,?\\)'\\).run\\('a','b'\\); const r = db.prepare\\('SELECT * FROM k WHERE id=?'\\).get\\('a'\\); console.log\\('WAL + query OK:', JSON.stringify\\(r\\)\\);\")",
+      "Bash(node -e ' *)",
+      "Bash(node -e \"const ts = require\\('@types/node'\\); console.log\\('skip'\\)\")",
+      "Bash(pnpm typecheck *)",
+      "Bash(pnpm smoke:kernel)",
+      "Bash(node -e \"require\\('node:sqlite'\\).DatabaseSync && console.log\\('node:sqlite OK'\\)\")",
+      "Bash(pnpm clean *)",
+      "Bash(node -e \"const s = require\\('sqlite'\\); console.log\\('sqlite OK:', Object.keys\\(s\\)\\)\")",
+      "Bash(node -e \"const s = require\\('node:sqlite'\\); console.log\\('node:sqlite OK:', Object.keys\\(s\\)\\)\")",
+      "Bash(node -e \"console.log\\(require\\('/Users/libo/opc/node_modules/.pnpm/esbuild@0.25.2/node_modules/esbuild/package.json'\\).version\\)\")",
+      "Bash(node /Users/libo/opc/node_modules/.pnpm/esbuild@0.27.7/node_modules/esbuild/bin/esbuild --bundle --platform=node --format=cjs /tmp/test_sqlite.ts)",
+      "Bash(npx esbuild *)",
+      "Bash(mkdir -p /tmp/test_pkg)",
+      "Read(//tmp/**)",
+      "Bash(/Users/libo/opc/node_modules/.bin/tsup index.ts --format cjs --platform node --external node:sqlite)",
+      "Read(//tmp/test_pkg/dist/**)",
+      "Read(//private/tmp/test_pkg/**)",
+      "Bash(/Users/libo/opc/node_modules/.bin/tsup index.ts --format cjs --platform node --no-bundle)",
+      "Read(//private/tmp/test_pkg/dist/**)",
+      "Bash(HERMES_ROOT=/Users/libo/opc pnpm smoke:workspace)",
+      "Bash(HERMES_ROOT=/Users/libo/opc pnpm smoke:approval)"
+    ]
+  }
+}

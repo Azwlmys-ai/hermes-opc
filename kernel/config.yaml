@@ -1,0 +1,41 @@
+# =============================================================================
+# Hermes v0.1 — Global Runtime Configuration
+# This file is read by hermes-core at startup.
+# Do NOT store secrets here. Use .env for API keys.
+# =============================================================================
+
+version: "0.1.0"
+
+# --- Budget Control ----------------------------------------------------------
+# These are defaults. Per-workspace overrides live in .hermes/workspace.yaml.
+
+budget:
+  global_daily_limit_usd: 10.00      # Hard stop across all workspaces per day
+  per_agent_session_limit_usd: 1.00  # Hard stop per single agent execution
+  alert_threshold: 0.80              # Notify founder at 80% of any limit
+  hard_stop_threshold: 1.00          # Force-terminate agent at 100%
+
+# --- Provider ----------------------------------------------------------------
+
+provider:
+  default: "anthropic"               # Only implemented provider in v0.1
+  default_model: "claude-sonnet-4-6" # Balance of capability and cost
+  timeout_seconds: 120               # Abort LLM call after 2 min
+
+# --- Agent Pool --------------------------------------------------------------
+
+agent:
+  max_concurrent: 1                  # v0.1: serial execution only
+  ephemeral_ttl_seconds: 300         # Destroy ephemeral agents after 5 min idle
+
+# --- Memory ------------------------------------------------------------------
+
+memory:
+  l2_enabled: true                   # SQLite project memory — enabled in v0.1
+  l3_enabled: false                  # ChromaDB global memory — NOT in v0.1
+
+# --- Logging -----------------------------------------------------------------
+
+logging:
+  level: "info"                      # debug | info | warn | error
+  audit_enabled: true                # Append all agent calls to audit/

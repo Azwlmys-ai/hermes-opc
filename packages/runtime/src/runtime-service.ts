@@ -5,6 +5,7 @@ import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path"
 import type {
   ExecCommandInput,
   ExecCommandResult,
+  IRuntimeEventBus,
   IRuntimeService,
   RuntimeAuditEntry,
 } from "./types.js"
@@ -17,7 +18,7 @@ export class RuntimeService implements IRuntimeService {
   private readonly hermesRoot: string
   private readonly children = new Map<number, ChildProcessWithoutNullStreams>()
 
-  constructor(hermesRoot?: string) {
+  constructor(hermesRoot?: string, private readonly eventBus?: IRuntimeEventBus) {
     this.hermesRoot = hermesRoot ?? process.env["HERMES_ROOT"] ?? process.cwd()
   }
 
@@ -40,26 +41,53 @@ export class RuntimeService implements IRuntimeService {
       const child = spawn(cmd, args, { cwd, shell: false })
       if (child.pid !== undefined) this.children.set(child.pid, child)
 
+      this.emitCommandEvent(input, "runtime.command.started", "info", {
+        command: input.command,
+        cwd,
+        pid: child.pid ?? null,
+        timeoutMs,
+      })
+
       let stdout = ""
       let stderr = ""
       let timedOut = false
 
       const timeout = setTimeout(() => {
         timedOut = true
+        this.emitCommandEvent(input, "runtime.command.stderr", "warn", {
+          command: input.command,
+          chunk: `Command timed out after ${timeoutMs}ms`,
+          timedOut: true,
+        })
         terminateChild(child)
       }, timeoutMs)
 
       child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString("utf8")
+        const text = chunk.toString("utf8")
+        stdout += text
+        this.emitCommandEvent(input, "runtime.command.stdout", "info", {
+          command: input.command,
+          chunk: text,
+        })
       })
 
       child.stderr.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString("utf8")
+        const text = chunk.toString("utf8")
+        stderr += text
+        this.emitCommandEvent(input, "runtime.command.stderr", "warn", {
+          command: input.command,
+          chunk: text,
+        })
       })
 
       child.on("error", (err: Error) => {
         clearTimeout(timeout)
         if (child.pid !== undefined) this.children.delete(child.pid)
+        this.emitCommandEvent(input, "runtime.command.completed", "error", {
+          command: input.command,
+          error: err.message,
+          durationMs: Date.now() - startedAt,
+        })
         reject(err)
       })
 
@@ -75,6 +103,12 @@ export class RuntimeService implements IRuntimeService {
           command: input.command,
         }
         this.audit(input.workspaceId, cwd, result)
+        this.emitCommandEvent(input, "runtime.command.completed", timedOut || exitCode !== 0 ? "warn" : "info", {
+          command: input.command,
+          exitCode,
+          durationMs: result.durationMs,
+          timedOut,
+        })
         resolvePromise(result)
       })
     })
@@ -136,10 +170,27 @@ export class RuntimeService implements IRuntimeService {
       // Audit failure must not break command execution.
     }
   }
+
+  private emitCommandEvent(
+    input: ExecCommandInput,
+    type: "runtime.command.started" | "runtime.command.stdout" | "runtime.command.stderr" | "runtime.command.completed",
+    level: "info" | "warn" | "error",
+    payload: Record<string, unknown>,
+  ): void {
+    const event = {
+      source: "runtime",
+      type,
+      level,
+      workspaceId: input.workspaceId,
+      payload,
+    } as const
+    if (input.taskId !== undefined) this.eventBus?.emit({ ...event, taskId: input.taskId })
+    else this.eventBus?.emit(event)
+  }
 }
 
-export function createRuntimeService(hermesRoot?: string): RuntimeService {
-  return new RuntimeService(hermesRoot)
+export function createRuntimeService(hermesRoot?: string, eventBus?: IRuntimeEventBus): RuntimeService {
+  return new RuntimeService(hermesRoot, eventBus)
 }
 
 function assertAllowed(tokens: string[]): void {

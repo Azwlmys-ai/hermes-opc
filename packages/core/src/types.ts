@@ -7,6 +7,7 @@ import type { AgentType, Task, AgentResult, AgentContext, Priority } from "@herm
 import type { CostEstimate } from "@hermes/provider"
 import type { IMemoryService, MemoryEntry, TaskStatus } from "@hermes/memory"
 import type { PatchProposal }  from "@hermes/workspace"
+import type { IRuntimeEventBus } from "@hermes/runtime"
 
 // Re-export types that callers of @hermes/core commonly need,
 // so they don't have to know which sub-package owns them.
@@ -21,6 +22,7 @@ export type {
   MemoryEntry,
   TaskStatus,
   PatchProposal,
+  IRuntimeEventBus,
 }
 
 // ---------------------------------------------------------------------------

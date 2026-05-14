@@ -20,6 +20,7 @@ import type { IProvider, CompletionRequest } from "@hermes/provider"
 import { createMemoryService, TaskStatus }   from "@hermes/memory"
 import type { IMemoryService }               from "@hermes/memory"
 import { createWorkspaceService }            from "@hermes/workspace"
+import type { IRuntimeEventBus }             from "@hermes/runtime"
 import {
   AgentType,
   AgentTier,
@@ -123,7 +124,7 @@ export class Kernel implements IKernel {
   private executing         = false
   private shutdownRequested = false
 
-  constructor(config: KernelConfig, provider: IProvider) {
+  constructor(config: KernelConfig, provider: IProvider, private readonly eventBus?: IRuntimeEventBus) {
     this.config   = config
     this.provider = provider
   }
@@ -223,11 +224,22 @@ export class Kernel implements IKernel {
 
     const proposal = node.result?.patchProposal
     if (proposal !== undefined && proposal.patches.length > 0) {
+      this.emitEvent("workspace", "workspace.patch.approved", "info", node, {
+        summary: proposal.summary,
+        patchCount: proposal.patches.length,
+        paths: proposal.patches.map(patch => patch.path),
+      })
       const ws = this.getOrCreateWorkspace(node.task.workspace)
-      await ws.applyPatch(proposal)
+      const applied = await ws.applyPatch(proposal)
+      this.emitEvent("workspace", "workspace.patch.applied", "info", node, {
+        summary: proposal.summary,
+        patchCount: applied.length,
+        paths: applied.map(patch => patch.path),
+      })
     }
 
     node.status = TaskStatus.Done
+    this.emitEvent("kernel", "task.completed", "info", node, { status: node.status, approved: true })
   }
 
   // ── IKernel.rejectTask ────────────────────────────────────────────────────
@@ -242,6 +254,10 @@ export class Kernel implements IKernel {
     }
     node.status = TaskStatus.Failed
     if (reason !== undefined) node.rejectReason = reason
+    this.emitEvent("kernel", "task.failed", "warn", node, {
+      status: node.status,
+      reason: reason ?? "Task rejected",
+    })
   }
 
   // ── IKernel.getTaskDetail ─────────────────────────────────────────────────
@@ -386,6 +402,11 @@ export class Kernel implements IKernel {
   private async runTask(node: TaskNode): Promise<void> {
     const { task } = node
     node.status = TaskStatus.Running
+    this.emitEvent("kernel", "task.started", "info", node, {
+      status: node.status,
+      agentType: task.type,
+      instruction: task.instruction,
+    })
 
     const memory  = this.getOrCreateMemory(task.workspace)
     const agentId = `${task.type}-${task.workspace}-${Date.now()}`
@@ -436,10 +457,43 @@ export class Kernel implements IKernel {
         result.patchProposal.patches.length > 0
 
       node.status = hasPendingPatches ? TaskStatus.WaitingApproval : TaskStatus.Done
+      if (hasPendingPatches && result.patchProposal !== undefined) {
+        this.emitEvent("workspace", "workspace.patch.proposed", "info", node, {
+          summary: result.patchProposal.summary,
+          patchCount: result.patchProposal.patches.length,
+          paths: result.patchProposal.patches.map(patch => patch.path),
+        })
+      } else {
+        this.emitEvent("kernel", "task.completed", "info", node, {
+          status: node.status,
+          costUsd: result.costUsd,
+        })
+      }
     } catch (err) {
       node.status = TaskStatus.Failed
+      this.emitEvent("kernel", "task.failed", "error", node, {
+        status: node.status,
+        error: err instanceof Error ? err.message : String(err),
+      })
       throw err
     }
+  }
+
+  private emitEvent(
+    source: "kernel" | "workspace",
+    type: "task.started" | "task.completed" | "task.failed" | "workspace.patch.proposed" | "workspace.patch.approved" | "workspace.patch.applied",
+    level: "info" | "warn" | "error",
+    node: TaskNode,
+    payload: Record<string, unknown>,
+  ): void {
+    this.eventBus?.emit({
+      source,
+      type,
+      level,
+      workspaceId: node.task.workspace,
+      taskId: node.task.id,
+      payload,
+    })
   }
 
   private buildAgent(agentType: AgentType, config: AgentConfig): IAgent {

@@ -20,6 +20,7 @@
     "@hermes/agent": "workspace:*",
     "@hermes/memory": "workspace:*",
     "@hermes/provider": "workspace:*",
+    "@hermes/runtime": "workspace:*",
     "@hermes/workspace": "workspace:*",
     "yaml": "^2.7.0"
   },

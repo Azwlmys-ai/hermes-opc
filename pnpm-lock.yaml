@@ -54,6 +54,9 @@ importers:
       '@hermes/provider':
         specifier: workspace:*
         version: link:../provider
+      '@hermes/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       '@hermes/workspace':
         specifier: workspace:*
         version: link:../workspace

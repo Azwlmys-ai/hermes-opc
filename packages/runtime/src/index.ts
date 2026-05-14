@@ -1,4 +1,5 @@
 export * from "./types.js"
+export { RuntimeEventBus, createRuntimeEventBus } from "./event-bus.js"
 export { RuntimeService, createRuntimeService } from "./runtime-service.js"
 export {
   runtimeToolDefinitions,

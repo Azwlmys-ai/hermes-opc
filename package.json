@@ -13,7 +13,8 @@
     "smoke:kernel": "tsx --env-file=.env scripts/smoke-kernel.ts",
     "smoke:workspace": "tsx scripts/smoke-workspace.ts",
     "smoke:runtime": "tsx scripts/smoke-runtime.ts",
-    "smoke:approval": "tsx --env-file=.env scripts/smoke-approval.ts"
+    "smoke:approval": "tsx --env-file=.env scripts/smoke-approval.ts",
+    "smoke:events": "tsx scripts/smoke-events.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

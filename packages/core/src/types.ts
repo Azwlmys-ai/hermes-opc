@@ -3,7 +3,15 @@
 // The Kernel is the integration point: all other packages converge here.
 // =============================================================================
 
-import type { AgentType, Task, AgentResult, AgentContext, Priority } from "@hermes/agent"
+import type {
+  AgentType,
+  Task,
+  AgentResult,
+  AgentContext,
+  Priority,
+  AgentPlan,
+  VerificationPlan,
+} from "@hermes/agent"
 import type { CostEstimate } from "@hermes/provider"
 import type { IMemoryService, MemoryEntry, TaskStatus } from "@hermes/memory"
 import type { PatchProposal }  from "@hermes/workspace"
@@ -17,12 +25,55 @@ export type {
   AgentResult,
   AgentContext,
   Priority,
+  AgentPlan,
+  VerificationPlan,
   CostEstimate,
   IMemoryService,
   MemoryEntry,
   TaskStatus,
   PatchProposal,
   IRuntimeEventBus,
+}
+
+// ---------------------------------------------------------------------------
+// PatchContext — self-contained to avoid cross-package module-resolution issues.
+// Mirrors @hermes/workspace-intelligence PatchContext structurally.
+// ---------------------------------------------------------------------------
+
+/** Minimal package manifest (subset of PackageManifest from workspace-intelligence). */
+export interface PackageManifestForPatch {
+  name: string
+  rootDir: string
+  relativePath: string
+  version: string
+  dependencies: Record<string, string>
+  devDependencies: Record<string, string>
+  scripts: Record<string, string>
+  entryFile: string | null
+  srcDir: string | null
+}
+
+export interface PatchContext {
+  /** The target file or symbol that was queried */
+  target: string
+  /** Kind of target: "file" or "symbol" */
+  targetKind: "file" | "symbol"
+  /** Source file(s) containing the definition */
+  definitionFiles: string[]
+  /** Files that import the target file */
+  importers: string[]
+  /** Symbols exported by the target file */
+  exportedSymbols: string[]
+  /** The package that owns the target */
+  packageOwner: PackageManifestForPatch | null
+  /** Packages that depend on the owning package */
+  dependentPackages: string[]
+  /** Suggested typecheck command */
+  typecheckCommand: string | null
+  /** Suggested test command */
+  testCommand: string | null
+  /** All source files in the owning package */
+  siblingFiles: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -187,14 +238,20 @@ export interface TaskDetail {
   agentId?:     string
   /** Agent's primary output text — present once status is Done */
   output?:      string
+  /** Execution plan (populated by ToolUseAgent-backed agents) */
+  plan?:            AgentPlan
+  /** Patch context from workspace intelligence */
+  patchContext?:    PatchContext
+  /** Patch proposal from CoderAgent — present when status is WAITING_APPROVAL or Done */
+  patchProposal?:   PatchProposal
+  /** Verification plan for this patch */
+  verificationPlan?: VerificationPlan
   done:         string[]
   deferred:     string[]
   risks:        string[]
   /** Actual spend — 0 until task reaches a terminal state */
   costUsd:      number
   completedAt?: string
-  /** Patch proposal from CoderAgent — present when status is WAITING_APPROVAL or Done */
-  patchProposal?: PatchProposal
   /** Reason provided to rejectTask() — present when status is Failed after rejection */
   rejectReason?:  string
 }

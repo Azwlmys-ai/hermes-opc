@@ -2,6 +2,7 @@
   "name": "@hermes/agent",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -19,7 +20,8 @@
   "dependencies": {
     "@hermes/memory": "workspace:*",
     "@hermes/provider": "workspace:*",
-    "@hermes/workspace": "workspace:*"
+    "@hermes/workspace": "workspace:*",
+    "@hermes/workspace-intelligence": "workspace:*"
   },
   "devDependencies": {
     "tsup": "*",

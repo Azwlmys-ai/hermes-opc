@@ -5,7 +5,8 @@
 //   · Serial only — one task running at a time (maxConcurrentAgents = 1)
 //   · In-memory task graph — not persisted across restarts
 //   · Daily spend counter resets on restart (no DB query at boot)
-//   · Implemented agent types: Coder, Writer only
+//   · Coder tasks use ToolUseCoderAgent (real workspace-intelligence integration)
+//   · Writer tasks use WriterAgent
 //   · approve/reject stubs only — tasks never reach WAITING_APPROVAL in v0.1
 //   · No force-cancel on shutdown — running task completes naturally
 // =============================================================================
@@ -25,8 +26,8 @@ import {
   AgentType,
   AgentTier,
   Priority,
-  CoderAgent,
   WriterAgent,
+  ToolUseCoderAgent,
 } from "@hermes/agent"
 import type {
   AgentConfig,
@@ -496,11 +497,22 @@ export class Kernel implements IKernel {
     })
   }
 
+  /**
+   * Resolve workspace root from HERMES_ROOT or process.cwd().
+   */
+  private resolveWorkspaceRoot(): string {
+    return process.env["HERMES_ROOT"] ?? process.cwd()
+  }
+
   private buildAgent(agentType: AgentType, config: AgentConfig): IAgent {
     const memory = this.getOrCreateMemory(config.workspace)
     switch (agentType) {
-      case AgentType.Coder:  return new CoderAgent(config, this.provider, memory)
-      case AgentType.Writer: return new WriterAgent(config, this.provider, memory)
+      case AgentType.Coder:
+        return new ToolUseCoderAgent(config, {
+          repoRoot: this.resolveWorkspaceRoot(),
+        })
+      case AgentType.Writer:
+        return new WriterAgent(config, this.provider, memory)
       default:
         throw new Error(`AgentType "${agentType}" is not implemented in v0.1`)
     }

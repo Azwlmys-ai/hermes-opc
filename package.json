@@ -14,7 +14,10 @@
     "smoke:workspace": "tsx scripts/smoke-workspace.ts",
     "smoke:runtime": "tsx scripts/smoke-runtime.ts",
     "smoke:approval": "tsx --env-file=.env scripts/smoke-approval.ts",
-    "smoke:events": "tsx scripts/smoke-events.ts"
+    "smoke:events": "tsx scripts/smoke-events.ts",
+    "smoke:workspace-intelligence": "tsx scripts/smoke-workspace-intelligence.ts",
+    "smoke:agent-tool-loop": "tsx scripts/smoke-agent-tool-loop.ts",
+    "smoke:kernel-tooluse": "tsx --env-file=.env scripts/smoke-kernel-tooluse.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

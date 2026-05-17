@@ -6,10 +6,11 @@
 import type { TokenUsage } from "@hermes/provider"
 import type { MemoryEntry, TaskStatus } from "@hermes/memory"
 import type { PatchProposal } from "@hermes/workspace"
+import type { PatchContext } from "@hermes/workspace-intelligence"
 
 // Re-export imported types so consumers of @hermes/agent get the full picture
 // without needing to know which package a type originated in.
-export type { TokenUsage, MemoryEntry, TaskStatus, PatchProposal }
+export type { TokenUsage, MemoryEntry, TaskStatus, PatchProposal, PatchContext }
 
 // ---------------------------------------------------------------------------
 // Enums
@@ -147,6 +148,12 @@ export interface AgentResult {
   output: string
   /** Structured patch proposal from CoderAgent (absent for other agent types) */
   patchProposal?: PatchProposal
+  /** Agent's execution plan (populated by ToolUseAgent-backed agents) */
+  plan?: AgentPlan
+  /** Patch context from workspace intelligence (populated by ToolUseAgent-backed agents) */
+  patchContext?: PatchContext
+  /** Verification plan for this patch (populated by ToolUseAgent-backed agents) */
+  verificationPlan?: VerificationPlan
   /** Bullet list of what was fully completed */
   done: string[]
   /** Bullet list of what was intentionally deferred */
@@ -191,4 +198,96 @@ export interface IAgent {
   cancel(): Promise<void>
 
   getStatus(): AgentStatus
+}
+
+// ---------------------------------------------------------------------------
+// Day 11 P1: Agent Tool-Use Loop types
+// ---------------------------------------------------------------------------
+
+/** A single step in an agent's execution plan. */
+export interface AgentPlanStep {
+  /** Step number (1-based) */
+  step: number
+  /** Human-readable description of what this step does */
+  description: string
+  /** Tool name used in this step (null for pure reasoning steps) */
+  toolName: string | null
+  /** Expected output from this step */
+  expectedOutput: string
+}
+
+/** Structured execution plan produced before acting. */
+export interface AgentPlan {
+  /** High-level goal */
+  goal: string
+  /** Ordered list of steps */
+  steps: AgentPlanStep[]
+  /** Symbols the plan needs to inspect */
+  targetSymbols: string[]
+  /** Files the plan needs to read/modify */
+  targetFiles: string[]
+  /** Overall expected outputs */
+  expectedOutputs: string[]
+}
+
+/** Record of a single tool invocation during agent execution. */
+export interface AgentToolCall {
+  /** Name of the tool invoked */
+  toolName: string
+  /** Input arguments passed to the tool */
+  input: Record<string, unknown>
+  /** Serialisable summary of tool output */
+  outputSummary: string
+  /** Whether the tool call succeeded */
+  success: boolean
+  /** Wall-clock duration in milliseconds */
+  durationMs: number
+}
+
+/** Result of workspace intelligence inspection. */
+export interface WorkspaceInspectionResult {
+  /** Number of packages discovered */
+  packageCount: number
+  /** Number of source files indexed */
+  sourceFileCount: number
+  /** Which symbols were found during inspection */
+  foundSymbols: string[]
+  /** Package dependency graph entries */
+  packageDependencies: Record<string, string[]>
+  /** Runtime entry hints discovered */
+  entryHints: string[]
+}
+
+/** Structured verification commands for a patch proposal. */
+export interface VerificationPlan {
+  /** Description of what to verify */
+  goal: string
+  /** Ordered list of verification commands to run */
+  commands: string[]
+  /** Packages affected by verification */
+  affectedPackages: string[]
+  /** Whether the plan expects changes to compile */
+  expectTypecheckPass: boolean
+}
+
+/** Complete result from a ToolUseAgent execution. */
+export interface ToolUseAgentResult {
+  /** Unique task identifier */
+  taskId: string
+  /** The structured plan generated */
+  plan: AgentPlan
+  /** Workspace inspection results */
+  inspection: WorkspaceInspectionResult
+  /** Patch context for the target */
+  patchContext: PatchContext | null
+  /** The generated patch proposal (dry-run only in v0.1) */
+  patchProposal: PatchProposal | null
+  /** Suggested verification commands */
+  verificationPlan: VerificationPlan
+  /** Ordered list of all tool calls made */
+  toolCalls: AgentToolCall[]
+  /** Terminal status */
+  status: "PLAN_EXECUTED" | "FAILED"
+  /** Why it failed (if applicable) */
+  error?: string
 }

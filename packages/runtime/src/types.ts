@@ -34,6 +34,10 @@ export type RuntimeEventType =
   | "workspace.patch.proposed"
   | "workspace.patch.approved"
   | "workspace.patch.applied"
+  | "task.plan.generated"
+  | "task.workspace.inspected"
+  | "task.patch.context.built"
+  | "task.verification.planned"
 
 export type RuntimeEventLevel = "debug" | "info" | "warn" | "error"
 

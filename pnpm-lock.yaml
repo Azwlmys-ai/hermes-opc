@@ -35,6 +35,9 @@ importers:
       '@hermes/workspace':
         specifier: workspace:*
         version: link:../workspace
+      '@hermes/workspace-intelligence':
+        specifier: workspace:*
+        version: link:../workspace-intelligence
     devDependencies:
       tsup:
         specifier: '*'
@@ -128,6 +131,15 @@ importers:
         version: 5.9.3
 
   packages/workspace:
+    devDependencies:
+      tsup:
+        specifier: '*'
+        version: 8.5.1(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: '*'
+        version: 5.9.3
+
+  packages/workspace-intelligence:
     devDependencies:
       tsup:
         specifier: '*'

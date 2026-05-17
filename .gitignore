@@ -8,3 +8,5 @@ coverage
 .DS_Store
 .env
 .env.*
+.hermes/
+*.db

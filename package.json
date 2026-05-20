@@ -20,7 +20,8 @@
     "smoke:kernel-tooluse": "tsx --env-file=.env scripts/smoke-kernel-tooluse.ts",
     "smoke:eventbus-runtime": "tsx --env-file=.env scripts/smoke-eventbus-runtime.ts",
     "smoke:prd-ingestion": "tsx --env-file=.env scripts/smoke-prd-ingestion.ts",
-    "smoke:verification": "tsx scripts/smoke-verification.ts"
+    "smoke:verification": "tsx scripts/smoke-verification.ts",
+    "smoke:mcp-approval": "tsx scripts/smoke-mcp-approval.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

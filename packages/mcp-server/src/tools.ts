@@ -1,12 +1,12 @@
 // =============================================================================
-// tools.ts — MCP tool definitions and dispatch for the 4 opc.* tools.
+// tools.ts — MCP tool definitions and dispatch for the opc.* tools.
 //
 // Tool names use the "opc." prefix to namespace them within Claude Code.
 // All args arrive as Record<string,unknown> from JSON-RPC; we validate
 // eagerly and throw descriptive errors on bad input.
 // =============================================================================
 
-import type { IKernel, AgentType, Priority } from "@hermes/core"
+import type { IKernel, AgentType, Priority, VerificationCheck } from "@hermes/core"
 
 // ---------------------------------------------------------------------------
 // MCP tool schema types (subset of JSON Schema)
@@ -84,6 +84,23 @@ export const toolDefinitions: readonly McpToolDefinition[] = [
     },
   },
   {
+    name:        "opc.get_task_detail",
+    description:
+      "Get a human-readable, structured breakdown of a task: status, patch proposal, " +
+      "verification pipeline result (passed/failed checks), reject reason, and cost. " +
+      "Prefer this over opc.get_task when the approval flow matters.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: {
+          type:        "string",
+          description: "Task ID returned by opc.submit_task.",
+        },
+      },
+      required: ["taskId"],
+    },
+  },
+  {
     name:        "opc.list_tasks",
     description:
       "List all tasks tracked by the kernel, optionally filtered to one workspace.",
@@ -117,9 +134,11 @@ export const toolDefinitions: readonly McpToolDefinition[] = [
   {
     name:        "opc.approve_task",
     description:
-      "Approve a WAITING_APPROVAL task. " +
-      "Any PatchProposal produced by CoderAgent is applied to the workspace files, " +
-      "then the task is marked Done.",
+      "Approve a WAITING_APPROVAL task. Runs the verification pipeline first " +
+      "(typecheck + smoke tests + patch safety). If verification passes, any " +
+      "PatchProposal is applied to the workspace and the task is marked Done. " +
+      "If verification fails, the task is marked Failed and no files are written. " +
+      "The response always includes the full verification result.",
     inputSchema: {
       type: "object",
       properties: {
@@ -216,6 +235,63 @@ async function getTask(
   return detail
 }
 
+async function getTaskDetail(
+  args: Record<string, unknown>,
+  kernel: IKernel,
+): Promise<unknown> {
+  const taskId = requireString(args, "taskId")
+  const d      = await kernel.getTaskDetail(taskId)
+
+  // Structured summary optimised for the approval workflow
+  const response: Record<string, unknown> = {
+    taskId:      d.taskId,
+    workspace:   d.workspace,
+    agentType:   d.agentType,
+    status:      d.status,
+    instruction: d.instruction,
+    createdAt:   d.createdAt,
+    costUsd:     d.costUsd,
+  }
+
+  if (d.completedAt !== undefined) response["completedAt"]  = d.completedAt
+  if (d.agentId     !== undefined) response["agentId"]      = d.agentId
+  if (d.output      !== undefined) response["outputSnippet"] = d.output.slice(0, 400)
+
+  if (d.patchProposal !== undefined) {
+    response["patchProposal"] = {
+      summary:    d.patchProposal.summary,
+      patchCount: d.patchProposal.patches.length,
+      paths:      d.patchProposal.patches.map(p => p.path),
+      proposedAt: d.patchProposal.proposedAt,
+    }
+  }
+
+  if (d.verification !== undefined) {
+    const failedChecks = d.verification.checks.filter((c: VerificationCheck) => !c.passed)
+    response["verification"] = {
+      passed:       d.verification.passed,
+      summary:      d.verification.summary,
+      checkCount:   d.verification.checks.length,
+      checks:       d.verification.checks.map((c: VerificationCheck) => ({
+        name:    c.name,
+        passed:  c.passed,
+        details: c.details,
+      })),
+      failedChecks: failedChecks.map((c: VerificationCheck) => ({
+        name:    c.name,
+        details: c.details,
+      })),
+    }
+  }
+
+  if (d.rejectReason !== undefined) response["rejectReason"] = d.rejectReason
+  if (d.risks.length   > 0)         response["risks"]        = d.risks
+  if (d.done.length    > 0)         response["done"]         = d.done
+  if (d.deferred.length > 0)        response["deferred"]     = d.deferred
+
+  return response
+}
+
 async function listTasks(
   args: Record<string, unknown>,
   kernel: IKernel,
@@ -239,13 +315,48 @@ async function approveTask(
   kernel: IKernel,
 ): Promise<unknown> {
   const taskId = requireString(args, "taskId")
+
+  // approveTask runs the verification pipeline internally.
+  // It throws only for protocol errors (wrong state, unknown task).
+  // Verification failure is surfaced via task status → FAILED, not an exception.
   await kernel.approveTask(taskId)
+
   const detail = await kernel.getTaskDetail(taskId)
-  return {
+
+  const response: Record<string, unknown> = {
     taskId,
-    status:  detail.status,
-    message: `Task ${taskId} approved — patches applied, status is ${detail.status}.`,
+    status: detail.status,
   }
+
+  if (detail.verification !== undefined) {
+    const failed = detail.verification.checks.filter((c: VerificationCheck) => !c.passed)
+    response["verification"] = {
+      passed:       detail.verification.passed,
+      summary:      detail.verification.summary,
+      checks:       detail.verification.checks.map((c: VerificationCheck) => ({
+        name:    c.name,
+        passed:  c.passed,
+        details: c.details,
+      })),
+      failedChecks: failed.map((c: VerificationCheck) => ({ name: c.name, details: c.details })),
+    }
+  }
+
+  if (detail.patchProposal !== undefined && detail.verification?.passed === true) {
+    response["patchApplied"] = {
+      summary:    detail.patchProposal.summary,
+      patchCount: detail.patchProposal.patches.length,
+      paths:      detail.patchProposal.patches.map(p => p.path),
+    }
+  }
+
+  const verPassed = detail.verification?.passed ?? true
+  response["message"] = verPassed
+    ? `Task ${taskId} approved — verification passed, status is ${detail.status}.`
+    : `Task ${taskId} failed verification — status is ${detail.status}. ` +
+      `Checks failed: ${detail.verification?.checks.filter((c: VerificationCheck) => !c.passed).map((c: VerificationCheck) => c.name).join(", ") ?? "unknown"}.`
+
+  return response
 }
 
 async function rejectTask(
@@ -273,12 +384,13 @@ export async function handleToolCall(
   kernel: IKernel,
 ): Promise<unknown> {
   switch (name) {
-    case "opc.submit_task":  return submitTask(args, kernel)
-    case "opc.get_task":     return getTask(args, kernel)
-    case "opc.list_tasks":   return listTasks(args, kernel)
-    case "opc.cancel_task":  return cancelTask(args, kernel)
-    case "opc.approve_task": return approveTask(args, kernel)
-    case "opc.reject_task":  return rejectTask(args, kernel)
+    case "opc.submit_task":    return submitTask(args, kernel)
+    case "opc.get_task":       return getTask(args, kernel)
+    case "opc.get_task_detail":return getTaskDetail(args, kernel)
+    case "opc.list_tasks":     return listTasks(args, kernel)
+    case "opc.cancel_task":    return cancelTask(args, kernel)
+    case "opc.approve_task":   return approveTask(args, kernel)
+    case "opc.reject_task":    return rejectTask(args, kernel)
     default:
       throw new Error(`Unknown tool: ${name}`)
   }

@@ -29,7 +29,8 @@
       "Bash(pnpm --filter @hermes/agent build)",
       "Bash(pnpm --filter @hermes/agent clean)",
       "Bash(pnpm smoke:kernel-tooluse)",
-      "Bash(pnpm smoke:prd-ingestion)"
+      "Bash(pnpm smoke:prd-ingestion)",
+      "Bash(pnpm smoke:mcp-approval)"
     ]
   }
 }

@@ -15,7 +15,16 @@ import type {
 import type { CostEstimate } from "@hermes/provider"
 import type { IMemoryService, MemoryEntry, TaskStatus } from "@hermes/memory"
 import type { PatchProposal }  from "@hermes/workspace"
-import type { IRuntimeEventBus, VerificationCheck, VerificationResult } from "@hermes/runtime"
+import type {
+  IRuntimeEventBus,
+  VerificationCheck,
+  VerificationResult,
+  ConstitutionRule,
+  ConstitutionViolation,
+  ConstitutionResult,
+  ConstitutionSeverity,
+  ConstitutionRuleType,
+} from "@hermes/runtime"
 
 // Re-export types that callers of @hermes/core commonly need,
 // so they don't have to know which sub-package owns them.
@@ -35,6 +44,11 @@ export type {
   IRuntimeEventBus,
   VerificationCheck,
   VerificationResult,
+  ConstitutionRule,
+  ConstitutionViolation,
+  ConstitutionResult,
+  ConstitutionSeverity,
+  ConstitutionRuleType,
 }
 
 // ---------------------------------------------------------------------------

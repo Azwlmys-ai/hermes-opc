@@ -1,0 +1,89 @@
+{
+  "version": "1.0",
+  "name": "OPC Default Constitution",
+  "description": "Security rules governing what agents may modify in the OPC workspace. All severity levels cause verification failure in v0.1.",
+  "rules": [
+    {
+      "id": "CONST-001",
+      "severity": "violation",
+      "description": "Environment files must not be modified",
+      "type": "path_glob",
+      "patterns": [".env", ".env.*", "**/.env", "**/.env.*", "**/.*env*"]
+    },
+    {
+      "id": "CONST-002",
+      "severity": "violation",
+      "description": "Credential and private key files must not be modified",
+      "type": "path_glob",
+      "patterns": [
+        "**/*.key", "**/*.pem", "**/*.p12", "**/*.pfx",
+        "**/id_rsa", "**/id_ed25519", "**/id_ecdsa",
+        "**/*secret*", "**/*credential*", "**/*private_key*"
+      ]
+    },
+    {
+      "id": "CONST-003",
+      "severity": "violation",
+      "description": "node_modules must not be modified",
+      "type": "path_glob",
+      "patterns": ["node_modules/**", "**/node_modules/**"]
+    },
+    {
+      "id": "CONST-004",
+      "severity": "violation",
+      "description": ".git internals must not be modified",
+      "type": "path_glob",
+      "patterns": [".git/**", "**/.git/**"]
+    },
+    {
+      "id": "CONST-005",
+      "severity": "violation",
+      "description": "Absolute paths are forbidden — patches must use workspace-relative paths to prevent cross-workspace access",
+      "type": "path_absolute"
+    },
+    {
+      "id": "CONST-006",
+      "severity": "violation",
+      "description": "Core project scaffold files must not be emptied (empty modifiedContent is treated as deletion)",
+      "type": "path_empty_content",
+      "paths": ["package.json", "pnpm-workspace.yaml", "turbo.json"]
+    },
+    {
+      "id": "CONST-007",
+      "severity": "elevated_review",
+      "description": "Dependency manifest changes require elevated review — risk of breaking workspace or introducing malicious packages",
+      "type": "path_exact",
+      "paths": ["package.json", "pnpm-lock.yaml"]
+    },
+    {
+      "id": "CONST-008",
+      "severity": "elevated_review",
+      "description": "Kernel source requires elevated review — changes here affect all task scheduling and cost guards",
+      "type": "path_exact",
+      "paths": ["packages/core/src/kernel.ts"]
+    },
+    {
+      "id": "CONST-009",
+      "severity": "elevated_review",
+      "description": "Verification gate source requires elevated review — changes here could disable security checks",
+      "type": "path_exact",
+      "paths": ["packages/runtime/src/verification-service.ts"]
+    },
+    {
+      "id": "CONST-010",
+      "severity": "violation",
+      "description": "Dangerous shell commands must not be introduced in file content",
+      "type": "content_pattern",
+      "patterns": [
+        "rm -rf /",
+        "sudo rm -rf",
+        "chmod -R 777",
+        "chmod 777 /",
+        "dd if=/dev/zero",
+        "> /dev/sda",
+        "mkfs.",
+        ":(){:|:&};:"
+      ]
+    }
+  ]
+}

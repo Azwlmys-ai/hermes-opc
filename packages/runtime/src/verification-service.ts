@@ -2,9 +2,10 @@
 // VerificationService — pre-approval patch verification pipeline.
 //
 // Runs a series of checks before a patch is applied to the workspace:
-//   A. Patch safety validation (paths, lock files, node_modules)
-//   B. TypeScript typecheck (pnpm typecheck in hermesRoot)
-//   C. Smoke tests — smoke:runtime and smoke:events if present in package.json
+//   A. patch.safe-paths  — low-level path safety (traversal, lock files)
+//   B. constitution.check — rule-based policy gate (see ConstitutionService)
+//   C. typecheck         — pnpm typecheck in hermesRoot
+//   D. smoke:runtime / smoke:events — fast regression smoke tests
 //
 // All checks are synchronous under the hood (spawnSync); the public API is
 // async to match the rest of the pipeline.
@@ -13,6 +14,7 @@
 import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
+import { ConstitutionService } from "./constitution-service.js"
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -31,11 +33,14 @@ export interface VerificationResult {
 }
 
 // ---------------------------------------------------------------------------
-// Minimal patch shape — avoids importing @hermes/workspace (DAG constraint)
+// Minimal patch shape — avoids importing @hermes/workspace (DAG constraint).
+// modifiedContent is optional: present when coming from PatchProposal,
+// absent in stub inputs (e.g. empty-patch tests).
 // ---------------------------------------------------------------------------
 
 interface PatchItem {
   path: string
+  modifiedContent?: string
 }
 
 interface PatchInput {
@@ -47,22 +52,27 @@ interface PatchInput {
 // ---------------------------------------------------------------------------
 
 export class VerificationService {
-  private readonly hermesRoot: string
+  private readonly hermesRoot:      string
+  private readonly constitutionSvc: ConstitutionService
 
   constructor(hermesRoot?: string) {
-    this.hermesRoot = hermesRoot ?? process.env["HERMES_ROOT"] ?? process.cwd()
+    this.hermesRoot      = hermesRoot ?? process.env["HERMES_ROOT"] ?? process.cwd()
+    this.constitutionSvc = new ConstitutionService(this.hermesRoot)
   }
 
   async verifyWorkspacePatch(proposal: PatchInput): Promise<VerificationResult> {
     const checks: VerificationCheck[] = []
 
-    // A. Patch safety
+    // A. Low-level patch safety (traversal, lock files, node_modules)
     checks.push(this.checkPatchPaths(proposal))
 
-    // B. TypeScript typecheck
+    // B. Constitution policy gate
+    checks.push(this.checkConstitution(proposal))
+
+    // C. TypeScript typecheck
     checks.push(this.checkTypecheck())
 
-    // C. Smoke tests (fast, no API key required)
+    // D. Smoke tests (fast, no API key required)
     checks.push(...this.checkSmokeTests())
 
     const passed = checks.every(c => c.passed)
@@ -111,7 +121,24 @@ export class VerificationService {
     return { name: "patch.safe-paths", passed: true }
   }
 
-  // ── B. TypeScript typecheck ───────────────────────────────────────────────
+  // ── B. Constitution policy gate ──────────────────────────────────────────
+
+  private checkConstitution(proposal: PatchInput): VerificationCheck {
+    const result = this.constitutionSvc.evaluatePatch(proposal.patches)
+
+    if (result.passed) {
+      return { name: "constitution.check", passed: true }
+    }
+
+    const allIssues = [...result.violations, ...result.warnings]
+    const details = allIssues
+      .map(v => `[${v.ruleId}/${v.severity}] ${v.description}: ${v.path ?? "content"}`)
+      .join(" | ")
+
+    return { name: "constitution.check", passed: false, details }
+  }
+
+  // ── C. TypeScript typecheck ───────────────────────────────────────────────
 
   private checkTypecheck(): VerificationCheck {
     const result = spawnSync("pnpm", ["typecheck"], {

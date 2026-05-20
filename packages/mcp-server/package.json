@@ -12,10 +12,14 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "hermes-mcp": "./dist/main.js"
+  },
   "scripts": {
     "build": "tsup src/index.ts src/main.ts --format esm,cjs --dts --platform node",
     "typecheck": "tsc --noEmit",
     "start": "node dist/main.js",
+    "dev": "tsx src/main.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {

@@ -90,7 +90,9 @@ export class ToolUseCoderAgent implements IAgent {
       if (result.plan) {
         agentResult.plan = result.plan
       }
-      if (result.patchContext) {
+      // Always propagate patchContext — it may be null (no match found),
+      // but the kernel needs the field present to emit task.patch.context.built.
+      if (result.patchContext !== null) {
         agentResult.patchContext = result.patchContext
       }
       if (result.verificationPlan) {

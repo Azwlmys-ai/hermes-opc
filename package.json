@@ -17,7 +17,10 @@
     "smoke:events": "tsx scripts/smoke-events.ts",
     "smoke:workspace-intelligence": "tsx scripts/smoke-workspace-intelligence.ts",
     "smoke:agent-tool-loop": "tsx scripts/smoke-agent-tool-loop.ts",
-    "smoke:kernel-tooluse": "tsx --env-file=.env scripts/smoke-kernel-tooluse.ts"
+    "smoke:kernel-tooluse": "tsx --env-file=.env scripts/smoke-kernel-tooluse.ts",
+    "smoke:eventbus-runtime": "tsx --env-file=.env scripts/smoke-eventbus-runtime.ts",
+    "smoke:prd-ingestion": "tsx --env-file=.env scripts/smoke-prd-ingestion.ts",
+    "smoke:verification": "tsx scripts/smoke-verification.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

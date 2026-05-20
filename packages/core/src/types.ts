@@ -15,7 +15,7 @@ import type {
 import type { CostEstimate } from "@hermes/provider"
 import type { IMemoryService, MemoryEntry, TaskStatus } from "@hermes/memory"
 import type { PatchProposal }  from "@hermes/workspace"
-import type { IRuntimeEventBus } from "@hermes/runtime"
+import type { IRuntimeEventBus, VerificationCheck, VerificationResult } from "@hermes/runtime"
 
 // Re-export types that callers of @hermes/core commonly need,
 // so they don't have to know which sub-package owns them.
@@ -33,6 +33,70 @@ export type {
   TaskStatus,
   PatchProposal,
   IRuntimeEventBus,
+  VerificationCheck,
+  VerificationResult,
+}
+
+// ---------------------------------------------------------------------------
+// Day 11.5 P2: PRD Ingestion types — ProjectSpec (local definition)
+// ---------------------------------------------------------------------------
+
+/** A single backlog item extracted from the PRD. */
+export interface BacklogItem {
+  /** Unique identifier within the backlog (e.g. "BID-001") */
+  id: string
+  /** Short title of the task */
+  title: string
+  /** Which module this belongs to */
+  module: string
+  /** Priority level */
+  priority: "P0" | "P1" | "P2" | "P3"
+  /** List of backlog item IDs this depends on */
+  dependencies: string[]
+  /** Acceptance criteria, one per line */
+  acceptanceCriteria: string[]
+  /** Free-form notes or clarifications */
+  notes?: string
+}
+
+/** A milestone extracted from the PRD. */
+export interface Milestone {
+  /** Phase identifier (e.g. "Phase 1: Core MVP") */
+  phase: string
+  /** Human-readable goal */
+  goal: string
+  /** Target completion date, ISO 8601 */
+  targetDate: string
+  /** Backlog item IDs included in this milestone */
+  backlogItemIds: string[]
+}
+
+/** Structured specification extracted from a PRD document. */
+export interface ProjectSpec {
+  /** Human-readable project name */
+  projectName: string
+  /** One-paragraph summary of the project */
+  summary: string
+  /** What IS in scope (locked) */
+  lockedScope: string[]
+  /** What is explicitly excluded */
+  excludedScope: string[]
+  /** Ordered backlog items */
+  backlog: BacklogItem[]
+  /** Phased milestones */
+  milestones: Milestone[]
+  /** Technology stack (languages, frameworks, infra) */
+  techStack: string[]
+  /** High-level modules / subsystems */
+  majorModules: string[]
+  /** Identified project risks */
+  risks: string[]
+  /** Overall acceptance criteria */
+  acceptanceCriteria: string[]
+  /** Source PRD filename (for traceability) */
+  sourcePrdPath: string
+  /** ISO 8601 — when this spec was extracted */
+  extractedAt: string
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +276,8 @@ export interface TaskNode {
   result?: AgentResult
   /** Stored when rejectTask() is called */
   rejectReason?: string
+  /** Result of the verification pipeline run during approveTask() */
+  verificationResult?: VerificationResult
 }
 
 // ---------------------------------------------------------------------------
@@ -246,6 +312,8 @@ export interface TaskDetail {
   patchProposal?:   PatchProposal
   /** Verification plan for this patch */
   verificationPlan?: VerificationPlan
+  /** PRD ingestion result — present for Pm agent tasks */
+  projectSpec?:     ProjectSpec
   done:         string[]
   deferred:     string[]
   risks:        string[]
@@ -254,6 +322,8 @@ export interface TaskDetail {
   completedAt?: string
   /** Reason provided to rejectTask() — present when status is Failed after rejection */
   rejectReason?:  string
+  /** Verification pipeline result — present after approveTask() runs verification */
+  verification?: VerificationResult
 }
 
 // ---------------------------------------------------------------------------

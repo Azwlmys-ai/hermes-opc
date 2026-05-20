@@ -151,7 +151,7 @@ export interface AgentResult {
   /** Agent's execution plan (populated by ToolUseAgent-backed agents) */
   plan?: AgentPlan
   /** Patch context from workspace intelligence (populated by ToolUseAgent-backed agents) */
-  patchContext?: PatchContext
+  patchContext?: PatchContext | null
   /** Verification plan for this patch (populated by ToolUseAgent-backed agents) */
   verificationPlan?: VerificationPlan
   /** Bullet list of what was fully completed */
@@ -290,4 +290,66 @@ export interface ToolUseAgentResult {
   status: "PLAN_EXECUTED" | "FAILED"
   /** Why it failed (if applicable) */
   error?: string
+}
+
+// ---------------------------------------------------------------------------
+// Day 11.5 P2: PRD Ingestion types — ProjectSpec & Backlog
+// ---------------------------------------------------------------------------
+
+/** A single backlog item extracted from the PRD. */
+export interface BacklogItem {
+  /** Unique identifier within the backlog (e.g. "BID-001") */
+  id: string
+  /** Short title of the task */
+  title: string
+  /** Which module this belongs to */
+  module: string
+  /** Priority level */
+  priority: "P0" | "P1" | "P2" | "P3"
+  /** List of backlog item IDs this depends on */
+  dependencies: string[]
+  /** Acceptance criteria, one per line */
+  acceptanceCriteria: string[]
+  /** Free-form notes or clarifications */
+  notes?: string
+}
+
+/** A milestone extracted from the PRD. */
+export interface Milestone {
+  /** Phase identifier (e.g. "Phase 1: Core MVP") */
+  phase: string
+  /** Human-readable goal */
+  goal: string
+  /** Target completion date, ISO 8601 */
+  targetDate: string
+  /** Backlog item IDs included in this milestone */
+  backlogItemIds: string[]
+}
+
+/** Structured specification extracted from a PRD document. */
+export interface ProjectSpec {
+  /** Human-readable project name */
+  projectName: string
+  /** One-paragraph summary of the project */
+  summary: string
+  /** What IS in scope (locked) */
+  lockedScope: string[]
+  /** What is explicitly excluded */
+  excludedScope: string[]
+  /** Ordered backlog items */
+  backlog: BacklogItem[]
+  /** Phased milestones */
+  milestones: Milestone[]
+  /** Technology stack (languages, frameworks, infra) */
+  techStack: string[]
+  /** High-level modules / subsystems */
+  majorModules: string[]
+  /** Identified project risks */
+  risks: string[]
+  /** Overall acceptance criteria */
+  acceptanceCriteria: string[]
+  /** Source PRD filename (for traceability) */
+  sourcePrdPath: string
+  /** ISO 8601 — when this spec was extracted */
+  extractedAt: string
 }

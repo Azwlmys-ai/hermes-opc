@@ -6,3 +6,8 @@ export {
   handleRuntimeToolCall,
 } from "./runtime-tool.js"
 export type { RuntimeToolDefinition } from "./runtime-tool.js"
+export {
+  VerificationService,
+  createVerificationService,
+} from "./verification-service.js"
+export type { VerificationCheck, VerificationResult } from "./verification-service.js"

@@ -7,3 +7,6 @@ export { WriterAgent } from "./agents/writer.js"
 export { ToolUseAgent } from "./tool-use-agent.js"
 export type { ToolUseAgentOptions } from "./tool-use-agent.js"
 export { ToolUseCoderAgent } from "./tool-use-coder-agent.js"
+
+// Day 11.5 P2: PRD Ingestion Agent
+export { PrdIngestionAgent } from "./prd-ingestion-agent.js"

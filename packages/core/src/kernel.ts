@@ -7,7 +7,7 @@
 //   · Daily spend counter resets on restart (no DB query at boot)
 //   · Coder tasks use ToolUseCoderAgent (real workspace-intelligence integration)
 //   · Writer tasks use WriterAgent
-//   · approve/reject stubs only — tasks never reach WAITING_APPROVAL in v0.1
+//   · Coder tasks can reach WAITING_APPROVAL with dry-run patch proposals
 //   · No force-cancel on shutdown — running task completes naturally
 // =============================================================================
 
@@ -21,13 +21,21 @@ import type { IProvider, CompletionRequest } from "@hermes/provider"
 import { createMemoryService, TaskStatus }   from "@hermes/memory"
 import type { IMemoryService }               from "@hermes/memory"
 import { createWorkspaceService }            from "@hermes/workspace"
-import type { IRuntimeEventBus }             from "@hermes/runtime"
+import { createRuntimeEventBus, VerificationService } from "@hermes/runtime"
+import type {
+  IRuntimeEventBus,
+  RuntimeEventType,
+  RuntimeEventSource,
+  RuntimeEventLevel,
+} from "@hermes/runtime"
 import {
+  AgentStatus,
   AgentType,
   AgentTier,
   Priority,
   WriterAgent,
   ToolUseCoderAgent,
+  PrdIngestionAgent,
 } from "@hermes/agent"
 import type {
   AgentConfig,
@@ -76,6 +84,13 @@ function buildPermissions(agentType: AgentType): AgentPermissions {
         execute:   [],
         forbidden: ["src/**", ".env", "kernel/**", "**/*.db"],
       }
+    case AgentType.Pm:
+      return {
+        read:      ["**/*.md", "docs/**", "examples/**", "*.docx"],
+        write:     ["docs/**", "examples/**"],
+        execute:   [],
+        forbidden: ["src/**", ".env", "kernel/**", "**/*.db"],
+      }
     default:
       return { read: [], write: [], execute: [], forbidden: ["**/*"] }
   }
@@ -113,8 +128,9 @@ function buildPermissionsSummary(config: AgentConfig): string {
 // ---------------------------------------------------------------------------
 
 export class Kernel implements IKernel {
-  private readonly config:         KernelConfig
-  private readonly provider:       IProvider
+  private readonly config:            KernelConfig
+  private readonly provider:          IProvider
+  private readonly verificationSvc:   VerificationService
   // SQLiteMemoryService typed directly so we can call .close() on shutdown
   private readonly memSvcs  = new Map<string, ReturnType<typeof createMemoryService>>()
   // WorkspaceService per workspace, lazily created on first approveTask call
@@ -125,10 +141,21 @@ export class Kernel implements IKernel {
   private executing         = false
   private shutdownRequested = false
 
-  constructor(config: KernelConfig, provider: IProvider, private readonly eventBus?: IRuntimeEventBus) {
-    this.config   = config
-    this.provider = provider
+  constructor(config: KernelConfig, provider: IProvider, eventBus: IRuntimeEventBus) {
+    this._eventBus       = eventBus
+    this.config          = config
+    this.provider        = provider
+    this.verificationSvc = new VerificationService(
+      process.env["HERMES_ROOT"] ?? process.cwd(),
+    )
   }
+
+  /** Expose EventBus for external subscribers (smoke tests, monitoring). */
+  get eventBus(): IRuntimeEventBus {
+    return this._eventBus
+  }
+
+  private readonly _eventBus: IRuntimeEventBus
 
   // ── IKernel.submit ────────────────────────────────────────────────────────
 
@@ -139,10 +166,14 @@ export class Kernel implements IKernel {
 
     const agentType = req.agentType ?? AgentType.Coder
 
-    if (agentType !== AgentType.Coder && agentType !== AgentType.Writer) {
+    if (
+      agentType !== AgentType.Coder &&
+      agentType !== AgentType.Writer &&
+      agentType !== AgentType.Pm
+    ) {
       throw new Error(
         `AgentType "${agentType}" is not implemented in v0.1. ` +
-        "Only Coder and Writer are available.",
+        "Only Coder, Writer, and Pm are available.",
       )
     }
 
@@ -198,6 +229,13 @@ export class Kernel implements IKernel {
 
     this.tasks.set(taskId, node)
 
+    // Emit task.created event
+    this.emitEvent("kernel", "task.created", "info", node, {
+      agentType: task.type,
+      instruction: task.instruction,
+      priority: task.priority,
+    })
+
     // Dispatch without blocking the caller
     void this.dispatchPending()
 
@@ -224,6 +262,39 @@ export class Kernel implements IKernel {
     }
 
     const proposal = node.result?.patchProposal
+
+    // ── Verification pipeline ────────────────────────────────────────────────
+    // Run even when there is no patch — the typecheck + smoke still apply.
+    this.emitEvent("kernel", "task.verification.started", "info", node, {
+      hasPatch: proposal !== undefined && proposal.patches.length > 0,
+    })
+
+    const verResult = await this.verificationSvc.verifyWorkspacePatch(
+      proposal ?? { patches: [] },
+    )
+    node.verificationResult = verResult
+
+    if (!verResult.passed) {
+      this.emitEvent("kernel", "task.verification.failed", "warn", node, {
+        summary: verResult.summary,
+        failedChecks: verResult.checks
+          .filter(c => !c.passed)
+          .map(c => ({ name: c.name, details: c.details })),
+      })
+      node.status = TaskStatus.Failed
+      this.emitEvent("kernel", "task.failed", "warn", node, {
+        status: node.status,
+        reason: `Verification failed: ${verResult.summary}`,
+      })
+      return
+    }
+
+    this.emitEvent("kernel", "task.verification.passed", "info", node, {
+      summary: verResult.summary,
+      checkCount: verResult.checks.length,
+    })
+    // ── Apply patch ───────────────────────────────────────────────────────────
+
     if (proposal !== undefined && proposal.patches.length > 0) {
       this.emitEvent("workspace", "workspace.patch.approved", "info", node, {
         summary: proposal.summary,
@@ -239,6 +310,11 @@ export class Kernel implements IKernel {
       })
     }
 
+    this.emitEvent("kernel", "task.approved", "info", node, {
+      previousStatus: TaskStatus.WaitingApproval,
+      approved: true,
+    })
+
     node.status = TaskStatus.Done
     this.emitEvent("kernel", "task.completed", "info", node, { status: node.status, approved: true })
   }
@@ -253,6 +329,11 @@ export class Kernel implements IKernel {
         `Task ${taskId} is not in WAITING_APPROVAL state (status: ${node.status})`,
       )
     }
+    // Emit task.rejected event
+    this.emitEvent("kernel", "task.rejected", "info", node, {
+      reason: reason ?? "Task rejected",
+    })
+
     node.status = TaskStatus.Failed
     if (reason !== undefined) node.rejectReason = reason
     this.emitEvent("kernel", "task.failed", "warn", node, {
@@ -295,7 +376,8 @@ export class Kernel implements IKernel {
       }
     }
 
-    if (node.rejectReason !== undefined) detail.rejectReason = node.rejectReason
+    if (node.rejectReason !== undefined)       detail.rejectReason   = node.rejectReason
+    if (node.verificationResult !== undefined) detail.verification   = node.verificationResult
 
     return detail
   }
@@ -364,7 +446,8 @@ export class Kernel implements IKernel {
   private getOrCreateWorkspace(workspaceId: string): ReturnType<typeof createWorkspaceService> {
     let svc = this.wsSvcs.get(workspaceId)
     if (svc === undefined) {
-      svc = createWorkspaceService(workspaceId)
+      const root = this.resolveWorkspaceRoot()
+      svc = createWorkspaceService(workspaceId, root, this._eventBus)
       this.wsSvcs.set(workspaceId, svc)
     }
     return svc
@@ -452,17 +535,48 @@ export class Kernel implements IKernel {
       this.dailySpendUsd += result.costUsd
 
       // CoderAgent returns a patchProposal when it has code changes to propose.
-      // The task waits for explicit human approval before files are written.
+      // Pm/other agents may report WaitingApproval for plan/doc review.
+      // In both cases, the task waits for explicit human approval.
       const hasPendingPatches =
         result.patchProposal !== undefined &&
         result.patchProposal.patches.length > 0
 
-      node.status = hasPendingPatches ? TaskStatus.WaitingApproval : TaskStatus.Done
+      node.status =
+        hasPendingPatches || result.status === AgentStatus.WaitingApproval
+          ? TaskStatus.WaitingApproval
+          : TaskStatus.Done
+
+      // Emit workspace-aware events from agent result
+      if (result.plan !== undefined) {
+        this.emitEvent("kernel", "task.plan.generated", "info", node, {
+          goal: result.plan.goal,
+          stepCount: result.plan.steps.length,
+        })
+      }
+      if (result.patchContext !== undefined && result.patchContext !== null) {
+        this.emitEvent("kernel", "task.patch.context.built", "info", node, {
+          target: result.patchContext.target,
+          exportedSymbols: result.patchContext.exportedSymbols.length,
+          importers: result.patchContext.importers.length,
+        })
+      }
+      if (result.verificationPlan !== undefined) {
+        this.emitEvent("kernel", "task.verification.planned", "info", node, {
+          goal: result.verificationPlan.goal,
+        })
+      }
+
       if (hasPendingPatches && result.patchProposal !== undefined) {
         this.emitEvent("workspace", "workspace.patch.proposed", "info", node, {
           summary: result.patchProposal.summary,
           patchCount: result.patchProposal.patches.length,
           paths: result.patchProposal.patches.map(patch => patch.path),
+        })
+
+        // Emit task.approval.waiting
+        this.emitEvent("kernel", "task.approval.waiting", "info", node, {
+          patchSummary: result.patchProposal.summary,
+          patchCount: result.patchProposal.patches.length,
         })
       } else {
         this.emitEvent("kernel", "task.completed", "info", node, {
@@ -481,13 +595,13 @@ export class Kernel implements IKernel {
   }
 
   private emitEvent(
-    source: "kernel" | "workspace",
-    type: "task.started" | "task.completed" | "task.failed" | "workspace.patch.proposed" | "workspace.patch.approved" | "workspace.patch.applied",
-    level: "info" | "warn" | "error",
+    source: RuntimeEventSource,
+    type: RuntimeEventType,
+    level: RuntimeEventLevel,
     node: TaskNode,
     payload: Record<string, unknown>,
   ): void {
-    this.eventBus?.emit({
+    this._eventBus.emit({
       source,
       type,
       level,
@@ -513,6 +627,8 @@ export class Kernel implements IKernel {
         })
       case AgentType.Writer:
         return new WriterAgent(config, this.provider, memory)
+      case AgentType.Pm:
+        return new PrdIngestionAgent(config)
       default:
         throw new Error(`AgentType "${agentType}" is not implemented in v0.1`)
     }
@@ -556,5 +672,6 @@ export function createKernel(hermesRoot?: string): Kernel {
     )
   }
 
-  return new Kernel(config, provider)
+  const eventBus = createRuntimeEventBus()
+  return new Kernel(config, provider, eventBus)
 }

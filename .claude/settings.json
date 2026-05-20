@@ -21,7 +21,15 @@
       "Bash(node -e \"const s = require\\('node:sqlite'\\); console.log\\('node:sqlite OK:', Object.keys\\(s\\)\\)\")",
       "Bash(node -e \"console.log\\(require\\('/Users/libo/opc/node_modules/.pnpm/esbuild@0.25.2/node_modules/esbuild/package.json'\\).version\\)\")",
       "Bash(HERMES_ROOT=/Users/libo/opc pnpm smoke:workspace)",
-      "Bash(HERMES_ROOT=/Users/libo/opc pnpm smoke:approval)"
+      "Bash(HERMES_ROOT=/Users/libo/opc pnpm smoke:approval)",
+      "Bash(pnpm --filter @hermes/runtime build)",
+      "Bash(pnpm smoke:runtime)",
+      "Bash(pnpm smoke:events)",
+      "Bash(pnpm smoke:verification)",
+      "Bash(pnpm --filter @hermes/agent build)",
+      "Bash(pnpm --filter @hermes/agent clean)",
+      "Bash(pnpm smoke:kernel-tooluse)",
+      "Bash(pnpm smoke:prd-ingestion)"
     ]
   }
 }

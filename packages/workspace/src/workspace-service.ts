@@ -28,6 +28,20 @@ import type {
   PatchProposal,
 } from "./types.js"
 
+// ── Minimal event bus interface (local, to avoid cross-package dependency) ──
+
+interface IEventBus {
+  emit<TPayload = Record<string, unknown>>(input: {
+    source: string
+    type: string
+    level?: string
+    workspaceId: string
+    taskId?: string
+    payload?: TPayload
+  }): unknown
+  queryEvents?(query: Record<string, unknown>): unknown[]
+}
+
 // ---------------------------------------------------------------------------
 // WorkspaceService
 // ---------------------------------------------------------------------------
@@ -36,12 +50,14 @@ export class WorkspaceService implements IWorkspaceService {
   readonly workspaceId: string
   readonly root:        string
 
-  private readonly audit: AuditLogger
+  private readonly audit:    AuditLogger
+  private readonly eventBus: IEventBus | undefined
 
-  constructor(workspaceId: string, hermesRoot: string) {
+  constructor(workspaceId: string, hermesRoot: string, eventBus?: IEventBus) {
     this.workspaceId = workspaceId
     this.root        = resolveWorkspacePath(hermesRoot, workspaceId)
     this.audit       = new AuditLogger(hermesRoot, workspaceId)
+    this.eventBus    = eventBus
 
     // Ensure the workspace directory exists
     mkdirSync(this.root, { recursive: true })
@@ -163,6 +179,23 @@ export class WorkspaceService implements IWorkspaceService {
    * NOT rolled back (atomic transactional writes are deferred to v0.2).
    */
   async applyPatch(proposal: PatchProposal): Promise<FilePatch[]> {
+    // Emit patch.proposed before applying
+    if (this.eventBus) {
+      this.eventBus.emit({
+        source: "workspace",
+        type: "workspace.patch.proposed",
+        level: "info",
+        workspaceId: this.workspaceId,
+        taskId: proposal.taskId,
+        payload: {
+          summary: proposal.summary,
+          patchCount: proposal.patches.length,
+          paths: proposal.patches.map(patch => patch.path),
+          agentId: proposal.agentId,
+        },
+      })
+    }
+
     const applied: FilePatch[] = []
 
     for (const patch of proposal.patches) {
@@ -201,6 +234,23 @@ export class WorkspaceService implements IWorkspaceService {
       })
     }
 
+    // Emit patch.applied after all writes
+    if (this.eventBus) {
+      this.eventBus.emit({
+        source: "workspace",
+        type: "workspace.patch.applied",
+        level: "info",
+        workspaceId: this.workspaceId,
+        taskId: proposal.taskId,
+        payload: {
+          summary: proposal.summary,
+          patchCount: applied.length,
+          paths: applied.map(patch => patch.path),
+          agentId: proposal.agentId,
+        },
+      })
+    }
+
     return applied
   }
 }
@@ -216,7 +266,8 @@ export class WorkspaceService implements IWorkspaceService {
 export function createWorkspaceService(
   workspaceId: string,
   hermesRoot?: string,
+  eventBus?: IEventBus,
 ): WorkspaceService {
   const root = hermesRoot ?? process.env["HERMES_ROOT"] ?? process.cwd()
-  return new WorkspaceService(workspaceId, root)
+  return new WorkspaceService(workspaceId, root, eventBus)
 }

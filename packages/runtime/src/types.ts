@@ -24,9 +24,13 @@ export interface IRuntimeService {
 export type RuntimeEventSource = "kernel" | "runtime" | "workspace" | "system"
 
 export type RuntimeEventType =
+  | "task.created"
   | "task.started"
   | "task.completed"
   | "task.failed"
+  | "task.approval.waiting"
+  | "task.approved"
+  | "task.rejected"
   | "runtime.command.started"
   | "runtime.command.stdout"
   | "runtime.command.stderr"
@@ -38,6 +42,9 @@ export type RuntimeEventType =
   | "task.workspace.inspected"
   | "task.patch.context.built"
   | "task.verification.planned"
+  | "task.verification.started"
+  | "task.verification.passed"
+  | "task.verification.failed"
 
 export type RuntimeEventLevel = "debug" | "info" | "warn" | "error"
 
@@ -63,10 +70,30 @@ export interface RuntimeEventInput<TPayload = Record<string, unknown>> {
 
 export type RuntimeEventHandler = (event: RuntimeEvent) => void
 
+export interface EventFilter {
+  types?: RuntimeEventType[]
+  sources?: RuntimeEventSource[]
+  taskIds?: string[]
+  workspaceIds?: string[]
+  levels?: RuntimeEventLevel[]
+}
+
+export interface EventQuery {
+  types?: RuntimeEventType[]
+  sources?: RuntimeEventSource[]
+  taskIds?: string[]
+  workspaceIds?: string[]
+  levels?: RuntimeEventLevel[]
+  since?: string     // ISO timestamp — return events after this
+  limit?: number     // max events to return
+}
+
 export interface IRuntimeEventBus {
   emit<TPayload = Record<string, unknown>>(input: RuntimeEventInput<TPayload>): RuntimeEvent<TPayload>
   subscribe(handler: RuntimeEventHandler): () => void
+  subscribe(filter: EventFilter, handler: RuntimeEventHandler): () => void
   getEvents(): RuntimeEvent[]
+  queryEvents(query: EventQuery): RuntimeEvent[]
   clear(): void
 }
 

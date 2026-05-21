@@ -61,6 +61,8 @@ const allToolDefinitions = [
   ...runtimeToolDefinitions,
 ]
 
+export const mcpToolCount = allToolDefinitions.length
+
 // ---------------------------------------------------------------------------
 // McpServer
 // ---------------------------------------------------------------------------
@@ -93,7 +95,10 @@ export class McpServer {
       void this.kernel.shutdown()
     })
 
-    // Signal to stderr — stdout is reserved for MCP protocol output
+    // Diagnostics go to stderr; stdout is reserved for MCP JSON-RPC output.
+    process.stderr.write(`[hermes-mcp] cwd=${process.cwd()}\n`)
+    process.stderr.write(`[hermes-mcp] HERMES_ROOT=${this.hermesRoot}\n`)
+    process.stderr.write(`[hermes-mcp] registered tool count=${mcpToolCount}\n`)
     process.stderr.write("[hermes-mcp] server ready\n")
   }
 

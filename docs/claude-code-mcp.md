@@ -27,13 +27,19 @@ Alternatively, skip the build and run via `tsx` directly (development mode):
 pnpm mcp:server     # tsx --env-file=.env packages/mcp-server/src/main.ts
 ```
 
+Recommended production entrypoint after build:
+
+```bash
+pnpm mcp:server:prod # node packages/mcp-server/dist/main.js
+```
+
 ---
 
 ## 2 — Configure Claude Code
 
 Add the server to your Claude Code MCP settings.
 
-### Option A — Project-scoped (`.claude/settings.json`)
+### Option A — Recommended production mode (`.claude/settings.json`)
 
 Stored in `/Users/libo/opc/.claude/settings.json`. Only active inside this repo.
 
@@ -42,13 +48,8 @@ Stored in `/Users/libo/opc/.claude/settings.json`. Only active inside this repo.
   "mcpServers": {
     "hermes": {
       "command": "node",
-      "args": ["/Users/libo/opc/packages/mcp-server/dist/main.js"],
-      "cwd": "/Users/libo/opc",
-      "env": {
-        "ANTHROPIC_API_KEY": "YOUR_KEY_HERE",
-        "HERMES_ROOT": "/Users/libo/opc",
-        "HERMES_DEFAULT_WORKSPACE": "default"
-      }
+      "args": ["packages/mcp-server/dist/main.js"],
+      "cwd": "/Users/libo/opc"
     }
   }
 }
@@ -68,7 +69,8 @@ Stored in `/Users/libo/opc/.claude/settings.json`. Only active inside this repo.
 }
 ```
 
-> **Note:** `ANTHROPIC_API_KEY` must be present — either in `.env` (Option B) or the `env` block (Option A). Never commit real keys.
+> **Note:** `ANTHROPIC_API_KEY` must be present — either in `.env`, the client environment, or an explicit MCP `env` block. Never commit real keys.
+> In production mode, provide required environment variables through the client environment or an explicit MCP `env` block.
 
 ---
 
@@ -80,7 +82,7 @@ After Claude Code restarts (or reloads MCP servers), confirm the tools appear:
 /mcp
 ```
 
-You should see `hermes` listed with 13+ tools including the `opc.*` namespace.
+You should see `hermes` listed with 11+ tools including the `opc.*` namespace.
 
 You can also ask Claude directly:
 
@@ -183,6 +185,7 @@ Use opc.reject_task for task ID task-my-project-... with reason "Patch modifies 
 | `[hermes-mcp] Failed to initialise kernel` | Check `ANTHROPIC_API_KEY` is set and `kernel/config.yaml` exists |
 | Tools list is empty | Run `pnpm build` and confirm `packages/mcp-server/dist/main.js` exists |
 | `pnpm mcp:server` crashes immediately | Check `.env` has `ANTHROPIC_API_KEY=sk-ant-...` and `HERMES_ROOT=/Users/libo/opc` |
+| External client cannot mount hermes | Prefer production mode: `command: node`, `args: ["packages/mcp-server/dist/main.js"]`, `cwd: "/Users/libo/opc"` |
 | Verification fails on every approve | Run `pnpm typecheck` manually — there may be a pre-existing type error |
 
 ---
@@ -196,3 +199,11 @@ pnpm smoke:mcp-server
 ```
 
 This checks: tool registry (7 opc.* tools), JSON Schema shapes, and McpServer instantiation.
+
+Verify the production entrypoint used by external clients:
+
+```bash
+pnpm smoke:mcp-prod-server
+```
+
+This checks: mcp-server build output, `node packages/mcp-server/dist/main.js`, `initialize`, `tools/list`, and startup diagnostics on stderr.

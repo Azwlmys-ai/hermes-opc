@@ -27,3 +27,17 @@ Context: Stability validation run against opc-sandbox/task-board-mini
 | 2 | Direct file I/O fallback is forbidden | CRITICAL | N/A — protocol rule |
 
 Conclusion: OPC stability is acceptable for v0.1. The MCP connectivity gap must be treated as a hard block, not auto-recovered via direct I/O. Every code change path must go through the hermes MCP layer.
+
+## BLOCKER: External coding agents cannot connect to hermes MCP
+
+Observed:
+- Cline: hermes configured but not connected
+- Codex: hermes not connected
+- Server manual startup and JSON-RPC handshake previously passed
+
+Impact:
+- OPC sandbox validation cannot continue
+- Direct file I/O fallback is forbidden
+
+Decision:
+- Pause sandbox validation until an external MCP client can successfully call opc.list_tasks.

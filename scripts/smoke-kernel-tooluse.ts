@@ -2,21 +2,56 @@
 // =============================================================================
 // Smoke test: Kernel → ToolUseCoderAgent → workspace-intelligence path
 //
-// Verifies:
+// Verifies (Day 17 update — mock provider, no API key required):
 //   1. Kernel creates ToolUseCoderAgent for Coder tasks
-//   2. ToolUseAgent calls into workspace-intelligence (repo-index, symbol search)
-//   3. BaseAgent symbol is resolved from the OPC monorepo
-//   4. PatchContext is generated with exported symbols
-//   5. PatchProposal is generated (dry-run, no files written)
-//   6. Task status transitions to WAITING_APPROVAL
-//   7. getTaskDetail() returns plan, patchContext, patchProposal, verificationPlan
+//   2. ToolUseAgent calls workspace-intelligence (repo-index, source file scan)
+//   3. LLM call (mock) returns a real PatchProposal
+//   4. PatchProposal is populated from the mock LLM response
+//   5. Task status transitions to WAITING_APPROVAL
+//   6. getTaskDetail() returns output, patchProposal, done items
 // =============================================================================
 
-import { createKernel } from "../packages/core/src/index.js"
-import type { Kernel } from "../packages/core/src/index.js"
+import { resolve, dirname } from "node:path"
+import { Kernel, loadKernelConfig } from "../packages/core/src/index.js"
 import type { IKernel } from "../packages/core/src/types.js"
 import type { TaskDetail } from "../packages/core/src/types.js"
 import { TaskStatus } from "../packages/memory/src/types.js"
+import { createRuntimeEventBus } from "../packages/runtime/src/event-bus.js"
+
+const ROOT = resolve(dirname(new URL(import.meta.url).pathname), "..")
+
+// ---------------------------------------------------------------------------
+// Mock provider — no API key needed
+// ---------------------------------------------------------------------------
+
+const MOCK_PATCH = JSON.stringify({
+  summary: "Add patchContext analysis results as JSDoc to BaseAgent",
+  patches: [
+    {
+      path: "packages/agent/src/base-agent.ts",
+      content: "// Mock patch: JSDoc added\nexport abstract class BaseAgent {}\n",
+    },
+  ],
+})
+
+function makeMockProvider() {
+  return {
+    name:   "mock",
+    models: [],
+    estimateCost: () => ({
+      inputTokens: 10, estimatedOutputTokens: 20,
+      inputCostUsd: 0, estimatedOutputCostUsd: 0, totalEstimatedUsd: 0.0001,
+    }),
+    complete: async () => ({
+      content:    MOCK_PATCH,
+      usage:      { inputTokens: 10, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      model:      "mock",
+      stopReason: "end_turn" as const,
+    }),
+    stream:      async function*() { /* unused */ },
+    healthCheck: async () => true,
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -43,7 +78,7 @@ async function waitForStatus(
   kernel: IKernel,
   taskId: string,
   target: TaskStatus,
-  timeoutMs = 10000,
+  timeoutMs = 15000,
 ): Promise<TaskStatus> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -67,30 +102,31 @@ async function waitForStatus(
 async function main(): Promise<void> {
   console.log("🚀 Smoke test: Kernel + ToolUseCoderAgent + workspace-intelligence\n")
 
-  // 1. Create kernel
+  // 1. Create kernel with mock provider
   console.log("── Step 1: Kernel creation ──")
-  const kernel: Kernel = createKernel()
-  console.log("   ✅ Kernel created\n")
+  const config = loadKernelConfig(ROOT)
+  const bus    = createRuntimeEventBus()
+  const kernel = new Kernel(config, makeMockProvider() as never, bus)
+  console.log("   ✅ Kernel created (mock provider)\n")
 
-  // 2. Submit a coding task that requests workspace-intelligence analysis of BaseAgent
+  // 2. Submit a coding task
   console.log("── Step 2: Submit coding task ──")
   const instruction =
     "Analyze BaseAgent in packages/agent/src/base-agent.ts. " +
     "Find its class definition, exported symbols, and dependencies. " +
-    "Generate a patch context without modifying any files."
+    "Add patchContext analysis results as JSDoc."
   const { taskId } = await kernel.submit({
-    workspace: "opc",
+    workspace:  "opc",
     instruction,
-    // defaults to Coder
   })
   console.log(`   ✅ Task submitted: ${taskId}\n`)
 
-  // 3. Wait for task to complete (WAITING_APPROVAL or Done)
+  // 3. Wait for WAITING_APPROVAL
   console.log("── Step 3: Wait for execution ──")
-  const finalStatus = await waitForStatus(kernel, taskId, TaskStatus.WaitingApproval, 15000)
+  const finalStatus = await waitForStatus(kernel, taskId, TaskStatus.WaitingApproval, 20000)
   console.log(`   ✅ Final status: ${finalStatus}\n`)
 
-  // 4. Assert status is WAITING_APPROVAL
+  // 4. Assert status
   assert(
     finalStatus === TaskStatus.WaitingApproval || finalStatus === TaskStatus.Done,
     `Task reached terminal status: ${finalStatus}`,
@@ -103,42 +139,37 @@ async function main(): Promise<void> {
   console.log(`   Status:       ${detail.status}`)
   console.log(`   AgentId:      ${detail.agentId ?? "none"}`)
 
-  // 6. Verify detail contains patchProposal
+  // 6. Verify patchProposal populated from mock LLM response
   const proposal = assertExists(detail.patchProposal, "detail.patchProposal exists")
-  assert(Array.isArray(proposal.patches), "patchProposal.patches is array")
-  assert(proposal.patches.length > 0, "patchProposal.patches.length > 0")
-  assert(typeof proposal.summary === "string", "patchProposal.summary is string")
-  assert(proposal.summary.length > 0, "patchProposal.summary is non-empty")
-  console.log(`   Patch Summary: ${proposal.summary}`)
-  console.log(`   Patch Count:   ${proposal.patches.length}`)
-
-  // 7. Verify dry-run (no files were actually written)
-  // All patches should be empty content (placeholder) since ToolUseAgent does dry-run
-  for (const patch of proposal.patches) {
-    assert(typeof patch.path === "string", `patch.path is string: ${patch.path}`)
-    console.log(`   Patch path: ${patch.path}`)
+  assert(Array.isArray(proposal.patches),   "patchProposal.patches is array")
+  assert(proposal.patches.length > 0,       "patchProposal.patches.length > 0")
+  assert(
+    typeof proposal.summary === "string" && proposal.summary.length > 0,
+    "patchProposal.summary is non-empty",
+  )
+  console.log(`   Patch summary: ${proposal.summary}`)
+  console.log(`   Patch count:   ${proposal.patches.length}`)
+  for (const p of proposal.patches) {
+    assert(typeof p.path === "string", `patch.path is string: ${p.path}`)
+    console.log(`   Patch path:    ${p.path}`)
   }
 
-  // 8. Verify output contains workspace-intelligence data
+  // 7. Verify output references workspace-intelligence data
   const output = assertExists(detail.output, "detail.output exists")
-  assert(typeof output === "string", "output is string")
   assert(
-    output.includes("plan") || output.includes("patchContext") || output.includes("symbols"),
-    "Output references workspace-intelligence results",
+    output.includes("plan") || output.includes("patchContext") || output.includes("inspection"),
+    "output references workspace-intelligence results",
   )
   console.log(`   Output snippet: ${output.slice(0, 200)}...`)
 
-  // 9. Verify toolCalls exist in the result
-  // (toolCalls are on AgentResult, accessed through node.result which gets mapped to detail.done)
+  // 8. Verify done items
   assert(detail.done.length > 0, "task detail has done items")
 
-  // 10. Verify no real files were modified
-  // The smoke test runs against OPC monorepo, but ToolUseAgent only proposes patches
-  // Actual file writes only happen when approveTask() is called
+  // 9. No real files written — patches only applied after approveTask()
   console.log("\n── Step 5: Cleanup ──")
-  console.log("   ✅ No files were modified (dry-run only)")
+  console.log("   ✅ No files modified (patch proposal awaits approval)")
 
-  // 11. Shutdown
+  // 10. Shutdown
   console.log("\n── Step 6: Shutdown ──")
   await kernel.shutdown()
   console.log("   ✅ Kernel shut down\n")

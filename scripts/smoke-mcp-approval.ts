@@ -82,29 +82,26 @@ async function waitForApproval(kernel: Kernel, taskId: string, timeoutMs = 20_00
 
 function makeMockProvider(patchJson: string) {
   return {
-    providerName: "mock",
+    name:   "mock",
+    models: [],
     estimateCost: (_req: unknown) => ({
-      totalEstimatedUsd: 0.0001, inputTokens: 10, outputTokens: 10,
-    }),
-    modelConfig: (_m: string) => ({
-      inputPricePerMToken: 0, outputPricePerMToken: 0,
-      contextWindow: 8192, maxOutputTokens: 4096,
-      supportsVision: false, supportsToolUse: true,
+      inputTokens: 10, estimatedOutputTokens: 20,
+      inputCostUsd: 0, estimatedOutputCostUsd: 0, totalEstimatedUsd: 0.0001,
     }),
     complete: async (_req: unknown) => ({
-      content:      patchJson,
-      inputTokens:  10,
-      outputTokens: 20,
-      model:        "mock",
-      durationMs:   1,
-      costUsd:      0.0001,
+      content:    patchJson,
+      usage:      { inputTokens: 10, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      model:      "mock",
+      stopReason: "end_turn" as const,
     }),
+    stream:      async function*() { /* unused */ },
+    healthCheck: async () => true,
   }
 }
 
 const SAFE_PATCH_JSON = JSON.stringify({
   summary: "Add hello.ts",
-  patches: [{ path: "src/hello.ts", modifiedContent: "export const hello = () => 'world'\n" }],
+  patches: [{ path: "src/hello.ts", content: "export const hello = () => 'world'\n" }],
 })
 
 // ---------------------------------------------------------------------------

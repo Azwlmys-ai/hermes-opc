@@ -624,6 +624,8 @@ export class Kernel implements IKernel {
       case AgentType.Coder:
         return new ToolUseCoderAgent(config, {
           repoRoot: this.resolveWorkspaceRoot(),
+          provider: this.provider,
+          model:    config.model ?? this.config.defaultModel,
         })
       case AgentType.Writer:
         return new WriterAgent(config, this.provider, memory)

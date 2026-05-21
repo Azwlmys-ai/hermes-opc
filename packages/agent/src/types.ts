@@ -280,7 +280,7 @@ export interface ToolUseAgentResult {
   inspection: WorkspaceInspectionResult
   /** Patch context for the target */
   patchContext: PatchContext | null
-  /** The generated patch proposal (dry-run only in v0.1) */
+  /** The generated patch proposal */
   patchProposal: PatchProposal | null
   /** Suggested verification commands */
   verificationPlan: VerificationPlan
@@ -290,6 +290,10 @@ export interface ToolUseAgentResult {
   status: "PLAN_EXECUTED" | "FAILED"
   /** Why it failed (if applicable) */
   error?: string
+  /** Real token usage from the LLM call */
+  usage: TokenUsage
+  /** Actual cost incurred */
+  costUsd: number
 }
 
 // ---------------------------------------------------------------------------

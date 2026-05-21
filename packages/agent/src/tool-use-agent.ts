@@ -1,21 +1,22 @@
 // =============================================================================
-// ToolUseAgent — Day 11 P1: Minimal Agent Tool-Use Loop (dry-run).
+// ToolUseAgent — Day 17: LLM-backed planning and patch generation.
 //
-// Implements: plan → inspect workspace → build patch context → propose
-//             patch → generate verification plan
+// Flow: inspect workspace → build patch context → LLM call → patch proposal
+//       → verification plan
 //
-// v0.1 uses deterministic rule-based planning (no real LLM call).
-// This validates the tool-use LOOP, not the intelligence quality.
-//
-// No file writes. No real LLM calls. No EventBus. No kernel integration.
+// The LLM is given workspace context (packages, source files) and the task
+// instruction. It returns a structured JSON patch proposal which is parsed and
+// forwarded to the approval pipeline. No files are written here.
 // =============================================================================
 
 import { createWorkspaceIntelligence } from "@hermes/workspace-intelligence"
 import type {
   WorkspaceIntelligence,
   PatchContext,
+  SourceFileEntry,
 } from "@hermes/workspace-intelligence"
 import type { PatchProposal } from "@hermes/workspace"
+import type { IProvider, TokenUsage, CompletionRequest } from "@hermes/provider"
 import type {
   AgentPlan,
   AgentPlanStep,
@@ -30,7 +31,6 @@ import type {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Record wall-clock start → end and return ms. */
 function timeStart(): [number, number] {
   return [Date.now(), 0]
 }
@@ -39,118 +39,131 @@ function timeEnd(start: [number, number]): number {
   return start[1] - start[0]
 }
 
-/** Format a duration as a human-readable string. */
-function formatMs(ms: number): string {
-  return `${ms}ms`
+// ---------------------------------------------------------------------------
+// JSON parsing — same shape as CoderAgent expects from the LLM
+// ---------------------------------------------------------------------------
+
+interface RawPatch    { path: string; content: string }
+interface RawProposal { summary: string; patches: RawPatch[] }
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v)
+}
+function isString(v: unknown): v is string { return typeof v === "string" }
+
+function isRawPatch(v: unknown): v is RawPatch {
+  if (!isRecord(v)) return false
+  return isString(v["path"]) && isString(v["content"])
 }
 
-/** Extract a target symbol from a natural-language instruction.
- *  v0.1: simple keyword scanning. */
-function extractTargetSymbol(instruction: string): string {
-  const knownSymbols = [
-    "BaseAgent",
-    "CoderAgent",
-    "WriterAgent",
-    "RuntimeService",
-    "IKernel",
-    "IWorkspaceService",
-    "IRepoIndex",
-    "ISourceFileIndex",
+function isRawProposal(v: unknown): v is RawProposal {
+  if (!isRecord(v)) return false
+  if (!isString(v["summary"])) return false
+  if (!Array.isArray(v["patches"])) return false
+  return (v["patches"] as unknown[]).every(isRawPatch)
+}
+
+// ---------------------------------------------------------------------------
+// Cost calculation (same formula as BaseAgent)
+// ---------------------------------------------------------------------------
+
+function calcCostUsd(usage: TokenUsage, modelId: string, provider: IProvider): number {
+  const cfg = provider.models?.find(m => m.id === modelId)
+  if (cfg === undefined) return 0
+  return (
+    (usage.inputTokens      / 1_000_000) * cfg.inputPer1mUsd +
+    (usage.outputTokens     / 1_000_000) * cfg.outputPer1mUsd +
+    (usage.cacheReadTokens  / 1_000_000) * (cfg.cacheReadPer1mUsd  ?? 0) +
+    (usage.cacheWriteTokens / 1_000_000) * (cfg.cacheWritePer1mUsd ?? 0)
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Workspace context builder — summarises the repo for the LLM prompt
+// ---------------------------------------------------------------------------
+
+function buildWorkspaceContext(
+  repoRoot: string,
+  packages: string[],
+  scannedFiles: SourceFileEntry[],
+): string {
+  const lines: string[] = [
+    `Repo root: ${repoRoot}`,
+    "",
+    `Packages (${packages.length}):`,
+    ...packages.map(p => `  · ${p}`),
+    "",
+    `Source files (${scannedFiles.length} total, first 60):`,
+    ...scannedFiles.slice(0, 60).map(f => `  · ${f.relativePath}`),
   ]
-  const lower = instruction.toLowerCase()
-  for (const sym of knownSymbols) {
-    if (lower.includes(sym.toLowerCase())) return sym
+  if (scannedFiles.length > 60) {
+    lines.push(`  … and ${scannedFiles.length - 60} more`)
   }
-  // Fallback: try to find any PascalCase word
-  const match = instruction.match(/\b([A-Z][a-zA-Z]+)\b/)
-  return match?.[1] ?? "BaseAgent"
-}
-
-/** Extract a target file from a natural-language instruction.
- *  v0.1: simple path detection. */
-function extractTargetFile(
-  instruction: string,
-  symbol: string,
-  wi: WorkspaceIntelligence,
-): string | null {
-  // Try to find files containing the symbol
-  const entries = wi.sourceFileIndex.findFilesBySymbol(symbol)
-  if (entries.length > 0) {
-    const first = entries[0]
-    if (first) return first.relativePath
-  }
-  // Fallback: detect explicit paths in instruction
-  const pathMatch = instruction.match(/(?:src\/|packages\/|scripts\/)[^\s,]+\.ts/)
-  return pathMatch ? pathMatch[0] : null
+  return lines.join("\n")
 }
 
 // ---------------------------------------------------------------------------
-// Plan generation (deterministic, rule-based)
+// Plan builder — derived from LLM patch result
 // ---------------------------------------------------------------------------
 
-function generatePlan(
+function buildPlanFromPatches(
   task: Task,
-  symbol: string,
-  targetFile: string | null,
+  patches: { path: string }[],
+  patchContext: PatchContext | null,
 ): AgentPlan {
+  const targetFiles   = patches.map(p => p.path)
+  const targetSymbols = patchContext?.exportedSymbols.slice(0, 3) ?? []
+
   const steps: AgentPlanStep[] = [
     {
       step: 1,
-      description: `Inspect workspace to locate symbol "${symbol}"`,
-      toolName: "workspace-intelligence:findSymbol",
-      expectedOutput: `SourceFileEntry(s) for ${symbol}`,
+      description: "Inspect workspace packages and source files",
+      toolName: "workspace-intelligence:inspect",
+      expectedOutput: "Package map and source file index",
     },
     {
       step: 2,
-      description: `Build patch context for ${targetFile ?? symbol}`,
+      description: "Build patch context for primary target",
       toolName: "workspace-intelligence:buildPatchContext",
-      expectedOutput: `PatchContext with package owner, importers, exports`,
+      expectedOutput: "PatchContext with importers and package owner",
     },
     {
       step: 3,
-      description: `Analyze patch context and draft proposed changes`,
-      toolName: "reasoning",
-      expectedOutput: `Structured description of what to change`,
+      description: `Plan and generate patch proposal via LLM (${patches.length} file(s))`,
+      toolName: "llm:plan-and-patch",
+      expectedOutput: "PatchProposal JSON",
     },
     {
       step: 4,
-      description: `Generate dry-run patch proposal`,
-      toolName: "patch:propose",
-      expectedOutput: `PatchProposal JSON (not applied)`,
-    },
-    {
-      step: 5,
-      description: `Generate verification plan`,
+      description: "Generate verification plan",
       toolName: "verification:plan",
-      expectedOutput: `VerificationPlan with typecheck/test commands`,
+      expectedOutput: "Ordered verification commands",
     },
   ]
 
   return {
     goal: task.instruction,
     steps,
-    targetSymbols: [symbol],
-    targetFiles: targetFile ? [targetFile] : [],
+    targetSymbols,
+    targetFiles,
     expectedOutputs: [
       "Workspace inspection results",
-      "Patch context for target",
-      "Patch proposal (dry-run)",
+      "Patch context for primary target",
+      "LLM-generated patch proposal",
       "Verification plan",
     ],
   }
 }
 
 // ---------------------------------------------------------------------------
-// Verification plan generation
+// Verification plan (still deterministic — based on patch paths + context)
 // ---------------------------------------------------------------------------
 
 function generateVerificationPlan(
-  symbol: string,
   targetFile: string | null,
   patchContext: PatchContext | null,
 ): VerificationPlan {
   const commands: string[] = ["pnpm typecheck"]
-
   const affectedPackages: string[] = []
 
   if (patchContext?.packageOwner) {
@@ -160,19 +173,13 @@ function generateVerificationPlan(
     if (patchContext.typecheckCommand) {
       commands.push(patchContext.typecheckCommand)
     }
-  }
-
-  // Add package-specific smoke scripts if they exist
-  if (patchContext?.packageOwner) {
     for (const [script] of Object.entries(patchContext.packageOwner.scripts)) {
       if (script.startsWith("smoke:")) {
-        // Broader smoke scripts may be root-level, but we suggest them
         commands.push(`pnpm ${script}`)
       }
     }
   }
 
-  // General smoke
   if (targetFile) {
     if (targetFile.startsWith("packages/workspace-intelligence")) {
       commands.push("pnpm smoke:workspace-intelligence")
@@ -183,7 +190,7 @@ function generateVerificationPlan(
   }
 
   return {
-    goal: `Verify changes to ${symbol} pass all checks`,
+    goal: `Verify changes to ${targetFile ?? "target"} pass all checks`,
     commands,
     affectedPackages,
     expectTypecheckPass: true,
@@ -191,201 +198,241 @@ function generateVerificationPlan(
 }
 
 // ---------------------------------------------------------------------------
-// Patch proposal generation (dry-run, deterministic)
+// Heuristic fallback — used only to pick a patchContextBuilder query target
+// when workspace scan hasn't yielded a concrete file yet
 // ---------------------------------------------------------------------------
 
-function generatePatchProposal(
-  task: Task,
-  symbol: string,
-  targetFile: string | null,
-): PatchProposal {
-  const filePath = targetFile ?? `packages/agent/src/base-agent.ts`
-
-  // Simple mock patch: suggest adding a JSDoc comment
-  const modifiedContent =
-    `// =============================================================================
-// BaseAgent — abstract base class that implements the IAgent contract.
-//
-// Subclasses supply only:
-//   · buildSystemPrompt(task)  — returns the role-specific system prompt string
-//
-// BaseAgent handles:
-//   · Status lifecycle (Idle → Running → Done | Failed | Cancelled)
-//   · Provider call + error wrapping
-//   · Cost calculation from ModelConfig pricing
-//   · recordTask() write-back to L2 memory
-//   · Graceful cancellation via a boolean flag (v0.1 serial execution)
-//
-// NOTE: The postProcess hook is called after the raw LLM response arrives.
-//       Override it to parse structured output (e.g. CoderAgent JSON).
-//       Base implementation returns raw content unchanged.
-// =============================================================================
-`
-
-  return {
-    taskId: task.id,
-    agentId: "tool-use-agent-001",
-    summary: `Add JSDoc comment explaining postProcess hook in ${symbol}`,
-    proposedAt: new Date().toISOString(),
-    patches: [
-      {
-        path: filePath,
-        originalContent: "",
-        modifiedContent,
-        diff: "",
-        hunks: [],
-      },
-    ],
+function extractHeuristicSymbol(instruction: string): string {
+  const knownSymbols = [
+    "BaseAgent", "CoderAgent", "WriterAgent", "RuntimeService",
+    "IKernel", "IWorkspaceService", "IRepoIndex", "ISourceFileIndex",
+  ]
+  const lower = instruction.toLowerCase()
+  for (const sym of knownSymbols) {
+    if (lower.includes(sym.toLowerCase())) return sym
   }
+  const match = instruction.match(/\b([A-Z][a-zA-Z]+)\b/)
+  return match?.[1] ?? "BaseAgent"
+}
+
+function extractHeuristicFile(
+  instruction: string,
+  symbol: string,
+  wi: WorkspaceIntelligence,
+): string | null {
+  const entries = wi.sourceFileIndex.findFilesBySymbol(symbol)
+  if (entries.length > 0) {
+    const first = entries[0]
+    if (first) return first.relativePath
+  }
+  const pathMatch = instruction.match(/(?:src\/|packages\/|scripts\/|docs\/)[^\s,]+/)
+  return pathMatch ? pathMatch[0] : null
 }
 
 // ---------------------------------------------------------------------------
-// Main: ToolUseAgent
+// Options & main class
 // ---------------------------------------------------------------------------
 
 export interface ToolUseAgentOptions {
   /** Absolute path to the repo root */
   repoRoot: string
+  /** LLM provider — used for real patch generation */
+  provider: IProvider
+  /** Model ID to use for the LLM call */
+  model: string
+}
+
+const ZERO_USAGE: TokenUsage = {
+  inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
 }
 
 export class ToolUseAgent {
-  private wi: WorkspaceIntelligence
+  private wi:       WorkspaceIntelligence
+  private provider: IProvider
+  private model:    string
+  private repoRoot: string
 
   constructor(options: ToolUseAgentOptions) {
-    this.wi = createWorkspaceIntelligence({
-      repoRoot: options.repoRoot,
-    })
+    this.wi       = createWorkspaceIntelligence({ repoRoot: options.repoRoot })
+    this.provider = options.provider
+    this.model    = options.model
+    this.repoRoot = options.repoRoot
   }
 
   /**
-   * Execute the full tool-use loop for a task.
+   * Execute: inspect workspace → build patch context → LLM call →
+   *          derive plan → generate verification plan.
    *
-   * Loop: plan → inspect → patchContext → propose → verify
-   *
-   * All steps are deterministic (no LLM).
-   * No files are written to disk.
+   * No files are written. The returned PatchProposal is handed to the
+   * kernel's approval pipeline.
    */
   async execute(task: Task): Promise<ToolUseAgentResult> {
     const toolCalls: AgentToolCall[] = []
-    const startTime = Date.now()
 
-    // ----------------------------------------------------------------
-    // Step 0: Parse task instruction → extract target symbol & file
-    // ----------------------------------------------------------------
-    const symbol = extractTargetSymbol(task.instruction)
-    const targetFile = extractTargetFile(task.instruction, symbol, this.wi)
-
-    // ----------------------------------------------------------------
-    // Step 1: Generate plan
-    // ----------------------------------------------------------------
-    const plan = generatePlan(task, symbol, targetFile)
-    toolCalls.push({
-      toolName: "plan:generate",
-      input: { instruction: task.instruction, symbol, targetFile },
-      outputSummary: `Plan: ${plan.steps.length} steps, target=${symbol}`,
-      success: true,
-      durationMs: Date.now() - startTime,
-    })
-
-    // ----------------------------------------------------------------
-    // Step 2: Inspect workspace
-    // ----------------------------------------------------------------
+    // ── Step 1: Workspace scan ────────────────────────────────────────────────
     const tInspect = timeStart()
 
-    // Scan packages
     await this.wi.repoIndex.scan()
-    const packages = this.wi.repoIndex.listPackages()
-
-    // Scan source files (returns all entries)
+    const packages     = this.wi.repoIndex.listPackages()
     const scannedFiles = await this.wi.sourceFileIndex.scan()
-
-    // Build graph
     await this.wi.repoGraph.build()
 
-    const pkgDeps = this.wi.repoGraph.getPackageDependencies()
+    const pkgDeps    = this.wi.repoGraph.getPackageDependencies()
     const entryHints = this.wi.repoGraph.getRuntimeEntryHints()
-
-    // Find the target symbol in source files
-    const symbolFiles = this.wi.sourceFileIndex.findFilesBySymbol(symbol)
-    const foundSymbols = symbolFiles.length > 0 ? [symbol] : []
-
-    const inspectDuration = timeEnd(tInspect)
+    const inspectMs  = timeEnd(tInspect)
 
     const inspection: WorkspaceInspectionResult = {
-      packageCount: packages.length,
-      sourceFileCount: scannedFiles.length,
-      foundSymbols,
+      packageCount:       packages.length,
+      sourceFileCount:    scannedFiles.length,
+      foundSymbols:       [],
       packageDependencies: pkgDeps,
       entryHints,
     }
 
     toolCalls.push({
-      toolName: "workspace-intelligence:inspect",
-      input: { action: "scanAll" },
-      outputSummary:
-        `${packages.length} packages, ${symbolFiles.length} file(s) containing ${symbol}`,
-      success: true,
-      durationMs: inspectDuration,
+      toolName:    "workspace-intelligence:inspect",
+      input:       { action: "scanAll" },
+      outputSummary: `${packages.length} packages, ${scannedFiles.length} source files`,
+      success:     true,
+      durationMs:  inspectMs,
     })
 
-    // ----------------------------------------------------------------
-    // Step 3: Build patch context
-    // ----------------------------------------------------------------
+    // ── Step 2: Patch context (heuristic query target) ────────────────────────
     const tContext = timeStart()
 
-    const queryTarget = targetFile ?? symbol
+    const hSymbol     = extractHeuristicSymbol(task.instruction)
+    const hFile       = extractHeuristicFile(task.instruction, hSymbol, this.wi)
+    const queryTarget = hFile ?? hSymbol
     const patchContext = await this.wi.patchContextBuilder.build(queryTarget)
-
-    const contextDuration = timeEnd(tContext)
+    const contextMs   = timeEnd(tContext)
 
     toolCalls.push({
-      toolName: "workspace-intelligence:buildPatchContext",
-      input: { target: queryTarget },
+      toolName:    "workspace-intelligence:buildPatchContext",
+      input:       { target: queryTarget },
       outputSummary: patchContext
-        ? `PatchContext: ${patchContext.importers.length} importers, owner=${patchContext.packageOwner?.name ?? "none"}`
-        : "PatchContext: null (target not found)",
-      success: patchContext !== null,
-      durationMs: contextDuration,
+        ? `${patchContext.importers.length} importers, owner=${patchContext.packageOwner?.name ?? "none"}`
+        : "null (target not found)",
+      success:     patchContext !== null,
+      durationMs:  contextMs,
     })
 
-    // ----------------------------------------------------------------
-    // Step 4: Generate patch proposal (dry-run)
-    // ----------------------------------------------------------------
-    const tPatch = timeStart()
+    // ── Step 3: LLM call — plan + generate patch proposal ────────────────────
+    const tLLM = timeStart()
 
-    const patchProposal = generatePatchProposal(task, symbol, targetFile)
+    const workspaceCtx = buildWorkspaceContext(this.repoRoot, packages, scannedFiles)
 
-    const patchDuration = timeEnd(tPatch)
+    const systemPrompt = [
+      "You are Hermes CoderAgent — a senior software engineer inside an AI-native OS.",
+      "Your job: read the task instruction and workspace context, then produce a precise patch proposal.",
+      "",
+      "WORKSPACE CONTEXT:",
+      workspaceCtx,
+      "",
+      "RESPONSE FORMAT — return ONLY this JSON object (no markdown, no prose outside):",
+      "{",
+      '  "summary": "<one-line description of what the patches accomplish>",',
+      '  "patches": [',
+      '    { "path": "<relative/path/to/file>", "content": "<complete new file content>" }',
+      "  ]",
+      "}",
+      "",
+      "Rules:",
+      "  · JSON only — no markdown code fences, no explanation outside the object.",
+      "  · Each patch must contain the FULL file content (not a diff).",
+      "  · 'path' is relative to the repo root.",
+      "  · Only create/modify files that directly address the task.",
+      "  · No unsolicited refactoring or extra files.",
+      "  · FORBIDDEN paths: .env, *.db, kernel/**, audit/**",
+    ].join("\n")
+
+    const req: CompletionRequest = {
+      model:     this.model,
+      system:    systemPrompt,
+      messages:  [{ role: "user", content: task.instruction }],
+      maxTokens: 8192,
+      metadata:  {
+        taskId:    task.id,
+        workspace: task.workspace,
+        agentId:   "tool-use-agent",
+      },
+    }
+
+    let patchProposal: PatchProposal | null = null
+    let usage:   TokenUsage = { ...ZERO_USAGE }
+    let llmError: string | null = null
+
+    try {
+      const response = await this.provider.complete(req)
+      usage = response.usage ?? { ...ZERO_USAGE }
+
+      const stripped = response.content
+        .replace(/^```(?:json)?\s*/m, "")
+        .replace(/\s*```$/m, "")
+        .trim()
+
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(stripped)
+      } catch {
+        llmError = `LLM returned invalid JSON (first 200 chars): ${stripped.slice(0, 200)}`
+      }
+
+      if (parsed !== undefined) {
+        if (isRawProposal(parsed)) {
+          patchProposal = {
+            taskId:     task.id,
+            agentId:    "tool-use-agent-001",
+            summary:    parsed.summary,
+            proposedAt: new Date().toISOString(),
+            patches:    parsed.patches.map(p => ({
+              path:            p.path,
+              originalContent: "",
+              modifiedContent: p.content,
+              diff:            "",
+              hunks:           [],
+            })),
+          }
+        } else {
+          llmError = "LLM response did not match expected PatchProposal schema"
+        }
+      }
+    } catch (err) {
+      llmError = err instanceof Error ? err.message : String(err)
+    }
+
+    const llmMs   = timeEnd(tLLM)
+    const costUsd = calcCostUsd(usage, this.model, this.provider)
 
     toolCalls.push({
-      toolName: "patch:propose",
-      input: { symbol, targetFile, dryRun: true },
-      outputSummary: `PatchProposal: ${patchProposal.patches.length} file(s), summary="${patchProposal.summary}"`,
-      success: true,
-      durationMs: patchDuration,
+      toolName:    "llm:plan-and-patch",
+      input:       { model: this.model, instruction: task.instruction.slice(0, 120) },
+      outputSummary: patchProposal
+        ? `${patchProposal.patches.length} file(s) — "${patchProposal.summary}"`
+        : `failed — ${llmError ?? "unknown error"}`,
+      success:     patchProposal !== null,
+      durationMs:  llmMs,
     })
 
-    // ----------------------------------------------------------------
-    // Step 5: Generate verification plan
-    // ----------------------------------------------------------------
+    // ── Step 4: Derive plan from LLM patches ─────────────────────────────────
+    const plan = buildPlanFromPatches(
+      task,
+      patchProposal?.patches ?? [],
+      patchContext,
+    )
+
+    // ── Step 5: Generate verification plan ───────────────────────────────────
     const tVerify = timeStart()
-
-    const verificationPlan = generateVerificationPlan(symbol, targetFile, patchContext)
-
-    const verifyDuration = timeEnd(tVerify)
+    const firstPatchPath = patchProposal?.patches[0]?.path ?? hFile
+    const verificationPlan = generateVerificationPlan(firstPatchPath, patchContext)
+    const verifyMs = timeEnd(tVerify)
 
     toolCalls.push({
-      toolName: "verification:plan",
-      input: { symbol, targetFile, patchContextExists: patchContext !== null },
-      outputSummary: `${verificationPlan.commands.length} verification commands`,
-      success: true,
-      durationMs: verifyDuration,
+      toolName:    "verification:plan",
+      input:       { targetFile: firstPatchPath, patchContextExists: patchContext !== null },
+      outputSummary: `${verificationPlan.commands.length} commands`,
+      success:     true,
+      durationMs:  verifyMs,
     })
-
-    // ----------------------------------------------------------------
-    // Assemble result
-    // ----------------------------------------------------------------
-    const totalMs = Date.now() - startTime
 
     return {
       taskId: task.id,
@@ -395,7 +442,9 @@ export class ToolUseAgent {
       patchProposal,
       verificationPlan,
       toolCalls,
-      status: "PLAN_EXECUTED",
+      status:   "PLAN_EXECUTED",
+      usage,
+      costUsd,
     }
   }
 }

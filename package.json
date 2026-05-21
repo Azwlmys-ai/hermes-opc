@@ -24,7 +24,8 @@
     "smoke:mcp-approval": "tsx scripts/smoke-mcp-approval.ts",
     "smoke:mcp-server": "tsx scripts/smoke-mcp-server.ts",
     "mcp:server": "tsx --env-file=.env packages/mcp-server/src/main.ts",
-    "smoke:constitution": "tsx scripts/smoke-constitution.ts"
+    "smoke:constitution": "tsx scripts/smoke-constitution.ts",
+    "e2e:day16": "tsx scripts/run-day16-e2e.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

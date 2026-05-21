@@ -1,8 +1,9 @@
 // =============================================================================
 // ToolUseCoderAgent — IAgent wrapper that delegates to ToolUseAgent.
 //
-// Receives repoRoot at construction time and passes it through to the
-// internal ToolUseAgent for workspace-intelligence integration.
+// Receives provider + model at construction time and passes them through to
+// ToolUseAgent so the LLM call can be made with the kernel's configured
+// provider.
 // =============================================================================
 
 import type {
@@ -19,28 +20,27 @@ import type { ToolUseAgentOptions } from "./tool-use-agent.js"
 
 export class ToolUseCoderAgent implements IAgent {
   readonly config: AgentConfig
-  private repoRoot: string
+  private options: ToolUseAgentOptions
   private status: AgentStatus = AgentStatus.Idle
 
   constructor(config: AgentConfig, options: ToolUseAgentOptions) {
-    this.config = config
-    this.repoRoot = options.repoRoot
+    this.config  = config
+    this.options = options
   }
 
   async execute(task: Task, _ctx: AgentContext): Promise<AgentResult> {
     this.status = AgentStatus.Running
 
-    const agent = new ToolUseAgent({ repoRoot: this.repoRoot })
+    const agent = new ToolUseAgent(this.options)
 
     try {
       const result = await agent.execute(task)
 
-      // Base result fields (no optional ones yet)
       const base: Omit<
         AgentResult,
         "patchProposal" | "plan" | "patchContext" | "verificationPlan"
       > = {
-        taskId: result.taskId,
+        taskId:  result.taskId,
         agentId: this.config.id,
         status:
           result.status === "PLAN_EXECUTED"
@@ -61,27 +61,20 @@ export class ToolUseCoderAgent implements IAgent {
           ? [`Generated patch proposal: ${result.patchProposal.summary}`]
           : [],
         deferred: [],
-        risks: [],
+        risks:    [],
         toolCalls: result.toolCalls.map(
           (tc): ToolCall => ({
-            toolName: tc.toolName,
-            args: tc.input,
-            result: tc.outputSummary,
+            toolName:  tc.toolName,
+            args:      tc.input,
+            result:    tc.outputSummary,
             durationMs: tc.durationMs,
           }),
         ),
-        usage: {
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-        },
-        costUsd: 0,
+        usage:    result.usage,
+        costUsd:  result.costUsd,
         completedAt: new Date().toISOString(),
       }
 
-      // Merge optional fields only when they have a value.
-      // exactOptionalPropertyTypes forbids assigning undefined to them.
       const agentResult = { ...base } as AgentResult
 
       if (result.patchProposal) {
@@ -90,8 +83,6 @@ export class ToolUseCoderAgent implements IAgent {
       if (result.plan) {
         agentResult.plan = result.plan
       }
-      // Always propagate patchContext — it may be null (no match found),
-      // but the kernel needs the field present to emit task.patch.context.built.
       if (result.patchContext !== null) {
         agentResult.patchContext = result.patchContext
       }
@@ -105,21 +96,19 @@ export class ToolUseCoderAgent implements IAgent {
       this.status = AgentStatus.Failed
       const message = err instanceof Error ? err.message : String(err)
       return {
-        taskId: task.id,
+        taskId:  task.id,
         agentId: this.config.id,
-        status: AgentStatus.Failed,
-        output: `ToolUseAgent failed: ${message}`,
-        done: [],
+        status:  AgentStatus.Failed,
+        output:  `ToolUseAgent failed: ${message}`,
+        done:    [],
         deferred: [],
-        risks: [message],
+        risks:   [message],
         toolCalls: [],
         usage: {
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
+          inputTokens: 0, outputTokens: 0,
+          cacheReadTokens: 0, cacheWriteTokens: 0,
         },
-        costUsd: 0,
+        costUsd:     0,
         completedAt: new Date().toISOString(),
       }
     }

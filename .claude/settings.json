@@ -32,7 +32,21 @@
       "Bash(pnpm smoke:prd-ingestion)",
       "Bash(pnpm smoke:mcp-approval)",
       "Bash(pnpm smoke:mcp-server)",
-      "Bash(pnpm smoke:constitution)"
+      "Bash(pnpm smoke:constitution)",
+      "Bash(pnpm e2e:day16)",
+      "Bash(pnpm smoke:agent-tool-loop)",
+      "Bash(pnpm --filter @hermes/core build)"
     ]
+  },
+  "mcpServers": {
+    "hermes": {
+      "command": "npx",
+      "args": [
+        "tsx",
+        "--env-file=.env",
+        "packages/mcp-server/src/main.ts"
+      ],
+      "cwd": "/Users/libo/opc"
+    }
   }
 }
